@@ -1,55 +1,40 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, ShieldAlert, Activity, CheckCircle2, AlertTriangle, RefreshCw, Award, Lock, FileText, Check } from 'lucide-react';
-import { auditAPI, batchAPI, certificateAPI } from '../services/api';
+import { ShieldCheck, ShieldAlert, Activity, CheckCircle2, AlertTriangle, RefreshCw, Award, Lock, Check } from 'lucide-react';
+import { dashboardAPI, certificateAPI, auditAPI } from '../services/api';
 import StatusBadge from '../components/StatusBadge';
 import TimelineEvent from '../components/TimelineEvent';
 import ModeratorPanel from '../components/ModeratorPanel';
 
 export default function RegulatorDashboard() {
-  const [stats, setStats] = useState({
-    active_returns: 0,
-    pending_destruction: 0,
-    verified_destruction: 0,
-    critical_fraud_alerts: 0,
-  });
-  const [alerts, setAlerts] = useState([]);
-  const [batches, setBatches] = useState([]);
-  const [timeline, setTimeline] = useState([]);
-  const [moderatorEvents, setModeratorEvents] = useState([]);
-  const [certificates, setCertificates] = useState([]);
+  const [data, setData] = useState(null);
   const [auditResult, setAuditResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [actionMsg, setActionMsg] = useState(null);
 
   useEffect(() => {
-    loadData();
+    fetchDashboard();
+
+    const interval = setInterval(() => {
+      if (!document.hidden) {
+        fetchDashboard(false);
+      }
+    }, 3500);
+
+    return () => clearInterval(interval);
   }, []);
 
-  const loadData = async () => {
+  const fetchDashboard = async (showLoading = false) => {
+    if (showLoading) setLoading(true);
     try {
-      const [statsRes, alertsRes, batchesRes, certsRes] = await Promise.all([
-        auditAPI.getDashboardStats(),
-        auditAPI.getAlerts(),
-        batchAPI.getBatches(),
-        certificateAPI.getCertificates(),
-      ]);
-
-      setStats(statsRes.data);
-      setAlerts(alertsRes.data);
-      setBatches(batchesRes.data);
-      setCertificates(certsRes.data);
-
-      if (batchesRes.data.length > 0) {
-        const targetId = batchesRes.data[0].id;
-        const [timelineRes, modRes] = await Promise.all([
-          batchAPI.getBatchTimeline(targetId),
-          batchAPI.getModeratorEvents(targetId),
-        ]);
-        setTimeline(timelineRes.data);
-        setModeratorEvents(modRes.data);
+      const res = await dashboardAPI.getRegulatorDashboard();
+      setData(res.data);
+      if (res.data?.audit_verification && !auditResult) {
+        setAuditResult(res.data.audit_verification);
       }
     } catch (e) {
-      console.error(e);
+      console.error('Error fetching regulator dashboard:', e);
+    } finally {
+      if (showLoading) setLoading(false);
     }
   };
 
@@ -59,6 +44,10 @@ export default function RegulatorDashboard() {
     try {
       const res = await auditAPI.verifyAudit();
       setAuditResult(res.data);
+      setActionMsg({
+        type: 'success',
+        text: 'Cryptographic audit chain verified across all records in PostgreSQL!',
+      });
     } catch (err) {
       setAuditResult({
         is_valid: false,
@@ -69,25 +58,16 @@ export default function RegulatorDashboard() {
     }
   };
 
-  const handleAcknowledgeAlert = async (alertId) => {
-    try {
-      await auditAPI.acknowledgeAlert(alertId);
-      loadData();
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
   const handleVerifyCertificate = async (certId) => {
     setLoading(true);
     setActionMsg(null);
     try {
-      const res = await certificateAPI.verifyCertificate(certId);
+      await certificateAPI.verifyCertificate(certId);
       setActionMsg({
         type: 'success',
-        text: `Certificate verified! Batch lifecycle transitioning to CERTIFICATE_VERIFIED → CLOSED.`,
+        text: 'Certificate verified! Batch lifecycle transitioned to CERTIFICATE_VERIFIED → CLOSED.',
       });
-      loadData();
+      fetchDashboard(false);
     } catch (err) {
       setActionMsg({ type: 'error', text: err.response?.data?.detail || 'Certificate verification failed.' });
     } finally {
@@ -95,20 +75,46 @@ export default function RegulatorDashboard() {
     }
   };
 
-  const latestModeratorEvent = moderatorEvents[moderatorEvents.length - 1];
+  const handleAcknowledgeAlert = async (alertId) => {
+    try {
+      await auditAPI.acknowledgeAlert(alertId);
+      fetchDashboard(false);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const batch = data?.batch;
+  const summary = data?.summary_cards || {
+    active_returns: 0,
+    pending_destruction: 0,
+    verified_destruction: 0,
+    critical_fraud_alerts: 0,
+  };
+  const timeline = data?.timeline || [];
+  const alerts = data?.alerts || [];
+  const certificates = data?.certificates || [];
+  const moderatorInsight = data?.moderator_insight;
 
   return (
     <div className="space-y-8">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-200 pb-5">
         <div>
-          <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
-            CDSCO Regulator Compliance Oversight
-          </h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
+              CDSCO Regulator Compliance Oversight
+            </h1>
+            <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-200">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              LIVE POLLING
+            </span>
+          </div>
           <p className="text-xs text-slate-500 mt-1">
-            Logged in as <span className="font-bold text-slate-700">Central Drugs Standard Control Organization (CDSCO)</span>
+            Logged in as <span className="font-bold text-slate-700">{data?.organization_name || 'Central Drugs Standard Control Organization (CDSCO)'}</span>
           </p>
         </div>
+
         <div className="flex items-center gap-2">
           <button
             onClick={handleVerifyAuditChain}
@@ -117,8 +123,8 @@ export default function RegulatorDashboard() {
           >
             <ShieldCheck className="w-4 h-4" /> Verify Audit Chain
           </button>
-          <button onClick={loadData} className="btn-secondary text-xs">
-            <RefreshCw className="w-3.5 h-3.5" /> Refresh
+          <button onClick={() => fetchDashboard(true)} className="btn-secondary text-xs">
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
           </button>
         </div>
       </div>
@@ -137,7 +143,39 @@ export default function RegulatorDashboard() {
         </div>
       )}
 
-      {/* 4 Metric Cards */}
+      {/* Target Batch Overview Card */}
+      {batch && (
+        <div className="enterprise-card bg-white border border-slate-200 p-5 rounded-2xl shadow-sm space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block">
+                Regulatory Monitored Batch
+              </span>
+              <h2 className="text-lg font-bold text-slate-900">
+                {batch.batch_number} — {batch.medicine_name}
+              </h2>
+            </div>
+            <StatusBadge status={batch.current_status} />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs font-mono pt-2 border-t border-slate-100">
+            <div>
+              <span className="text-slate-400 block text-[10px] font-sans font-semibold">CURRENT STATUS</span>
+              <span className="font-extrabold text-blue-900">{batch.current_status}</span>
+            </div>
+            <div>
+              <span className="text-slate-400 block text-[10px] font-sans font-semibold">CURRENT LOCATION</span>
+              <span className="font-bold text-slate-800">{batch.current_location}</span>
+            </div>
+            <div>
+              <span className="text-slate-400 block text-[10px] font-sans font-semibold">CURRENT QUANTITY</span>
+              <span className="font-bold text-slate-800">{batch.quantity} Packs</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Small Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         <div className="enterprise-card bg-white border border-slate-200 p-5">
           <div className="flex items-center justify-between">
@@ -147,7 +185,7 @@ export default function RegulatorDashboard() {
             </div>
           </div>
           <div className="text-2xl font-extrabold text-slate-900 mt-2 font-mono">
-            {stats.active_returns}
+            {summary.active_returns}
           </div>
           <span className="text-[11px] text-slate-400">In reverse supply chain</span>
         </div>
@@ -160,7 +198,7 @@ export default function RegulatorDashboard() {
             </div>
           </div>
           <div className="text-2xl font-extrabold text-slate-900 mt-2 font-mono">
-            {stats.pending_destruction}
+            {summary.pending_destruction}
           </div>
           <span className="text-[11px] text-slate-400">Scheduled at facilities</span>
         </div>
@@ -173,33 +211,33 @@ export default function RegulatorDashboard() {
             </div>
           </div>
           <div className="text-2xl font-extrabold text-slate-900 mt-2 font-mono">
-            {stats.verified_destruction}
+            {summary.verified_destruction}
           </div>
           <span className="text-[11px] text-slate-400">Closed & certified</span>
         </div>
 
         <div className="enterprise-card bg-white border border-slate-200 p-5">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500">Critical Fraud Alerts</span>
+            <span className="text-xs font-semibold text-slate-500">Critical Alerts</span>
             <div className="w-8 h-8 rounded-lg bg-rose-50 text-rose-700 flex items-center justify-center">
               <ShieldAlert className="w-4 h-4" />
             </div>
           </div>
           <div className="text-2xl font-extrabold text-rose-700 mt-2 font-mono">
-            {stats.critical_fraud_alerts}
+            {summary.critical_fraud_alerts}
           </div>
           <span className="text-[11px] text-rose-600 font-medium">Unacknowledged events</span>
         </div>
       </div>
 
-      {/* Cryptographic Verification Modal / Alert Banner */}
+      {/* Cryptographic SHA-256 Hash Verification Card */}
       {auditResult && (
         <div
           className={`p-5 rounded-2xl border ${
             auditResult.is_valid
               ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
               : 'bg-rose-50 border-rose-300 text-rose-950'
-          } shadow-md space-y-2`}
+          } shadow-sm space-y-2`}
         >
           <div className="flex items-center gap-2.5">
             {auditResult.is_valid ? (
@@ -208,34 +246,39 @@ export default function RegulatorDashboard() {
               <ShieldAlert className="w-6 h-6 text-rose-600" />
             )}
             <h3 className="font-extrabold text-base">
-              {auditResult.is_valid ? 'SHA-256 Audit Chain Verification PASSED' : 'CRYPTOGRAPHIC TAMPERING DETECTED'}
+              {auditResult.is_valid
+                ? 'SHA-256 Tamper-Evident Hash Chain: VERIFIED & INTACT'
+                : 'CRYPTOGRAPHIC TAMPERING DETECTED'}
             </h3>
           </div>
           <p className="text-xs leading-relaxed">{auditResult.message}</p>
           {auditResult.total_records !== undefined && (
             <div className="text-[11px] font-mono text-slate-600 pt-1">
-              Verified Records: {auditResult.verified_records} / {auditResult.total_records}
+              Verified Records in PostgreSQL: {auditResult.verified_records} / {auditResult.total_records}
             </div>
           )}
         </div>
       )}
 
-      {/* AI Moderator Panel */}
-      {latestModeratorEvent && (
-        <ModeratorPanel moderatorEvent={latestModeratorEvent} />
+      {/* AI Assessment & Recommended Action */}
+      {moderatorInsight && (
+        <ModeratorPanel moderatorEvent={moderatorInsight} />
       )}
 
-      {/* Certificate Verification Action */}
+      {/* Pending Certificate Verification */}
       {certificates.length > 0 && (
         <div className="enterprise-card bg-white border border-slate-200 p-6 rounded-2xl space-y-4">
           <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
             <Award className="w-5 h-5 text-blue-800" />
-            <h3 className="font-bold text-slate-900 text-base">Pending Destruction Certificates</h3>
+            <h3 className="font-bold text-slate-900 text-base">Destruction Certificate Verification</h3>
           </div>
 
           <div className="space-y-3">
             {certificates.map((c) => (
-              <div key={c.id} className="bg-slate-50 border border-slate-200 p-4 rounded-xl flex items-center justify-between flex-wrap gap-4 text-xs font-mono">
+              <div
+                key={c.id}
+                className="bg-slate-50 border border-slate-200 p-4 rounded-xl flex items-center justify-between flex-wrap gap-4 text-xs font-mono"
+              >
                 <div>
                   <span className="font-bold text-sm text-slate-900">{c.certificate_number}</span>
                   <span className="text-slate-500 block text-xs font-sans mt-0.5">
@@ -243,9 +286,9 @@ export default function RegulatorDashboard() {
                   </span>
                 </div>
 
-                {c.is_verified ? (
+                {c.is_verified || batch?.current_status === 'CLOSED' ? (
                   <span className="inline-flex items-center gap-1 text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200 font-bold">
-                    <Check className="w-4 h-4" /> Certificate Verified & Closed
+                    <Check className="w-4 h-4" /> Certificate Verified — Compliance CLOSED
                   </span>
                 ) : (
                   <button
@@ -262,9 +305,9 @@ export default function RegulatorDashboard() {
         </div>
       )}
 
-      {/* Grid: Fraud Alerts & Batch Timeline */}
+      {/* Grid: Alerts & LIVE WORKFLOW TIMELINE */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Fraud Alerts Panel */}
+        {/* Security & Re-entry Alerts Panel */}
         <div className="enterprise-card space-y-4 lg:col-span-1">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2">
@@ -277,53 +320,66 @@ export default function RegulatorDashboard() {
           {alerts.length === 0 ? (
             <p className="text-xs text-slate-400 italic">No security alerts recorded.</p>
           ) : (
-            <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
-              {alerts.map((a) => (
-                <div
-                  key={a.id}
-                  className={`p-3 rounded-xl border text-xs space-y-1.5 ${
-                    a.severity === 'CRITICAL'
-                      ? 'bg-rose-50 border-rose-200 text-rose-950'
-                      : a.severity === 'HIGH'
-                      ? 'bg-amber-50 border-amber-200 text-amber-950'
-                      : 'bg-slate-50 border-slate-200 text-slate-900'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold uppercase tracking-wider text-[10px] px-2 py-0.5 rounded bg-white/80 border">
-                      {a.severity}
-                    </span>
-                    {!a.is_acknowledged && (
-                      <button
-                        onClick={() => handleAcknowledgeAlert(a.id)}
-                        className="text-[10px] text-blue-700 font-bold hover:underline"
-                      >
-                        Mark Ack
-                      </button>
-                    )}
+            <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
+              {alerts.map((a) => {
+                const isCritical = a.severity === 'CRITICAL';
+                return (
+                  <div
+                    key={a.id}
+                    className={`p-3.5 rounded-xl border text-xs space-y-1.5 ${
+                      isCritical
+                        ? 'bg-rose-50 border-rose-300 text-rose-950 ring-1 ring-rose-200'
+                        : a.severity === 'HIGH'
+                        ? 'bg-amber-50 border-amber-200 text-amber-950'
+                        : 'bg-slate-50 border-slate-200 text-slate-900'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className={`font-extrabold uppercase tracking-wider text-[10px] px-2 py-0.5 rounded ${
+                        isCritical ? 'bg-rose-600 text-white' : 'bg-amber-500 text-white'
+                      }`}>
+                        {a.severity}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-slate-400 font-mono">{a.time_display}</span>
+                        {!a.is_acknowledged && (
+                          <button
+                            onClick={() => handleAcknowledgeAlert(a.id)}
+                            className="text-[10px] text-blue-700 font-bold hover:underline"
+                          >
+                            Mark Ack
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="font-bold text-sm">{a.title}</div>
+                    <p className="text-[11px] leading-relaxed text-slate-700">{a.description}</p>
                   </div>
-                  <div className="font-bold">{a.title}</div>
-                  <p className="text-[11px] leading-relaxed text-slate-700">{a.description}</p>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
 
-        {/* Dynamic Batch Audit Timeline */}
+        {/* LIVE WORKFLOW TIMELINE FROM POSTGRESQL */}
         <div className="enterprise-card space-y-4 lg:col-span-2">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2">
               <Lock className="w-5 h-5 text-blue-800" />
-              <h3 className="font-bold text-slate-900 text-base">Cryptographic Audit Timeline (BATCH-001)</h3>
+              <div>
+                <h3 className="font-bold text-slate-900 text-base">
+                  LIVE WORKFLOW TIMELINE ({batch?.batch_number || 'BATCH-001'})
+                </h3>
+                <p className="text-[11px] text-slate-500">Real-time sequence populated directly from PostgreSQL</p>
+              </div>
             </div>
-            <span className="text-xs font-mono text-slate-400">{timeline.length} Audit Entries</span>
+            <span className="text-xs font-mono text-slate-400">{timeline.length} Events</span>
           </div>
 
           {timeline.length === 0 ? (
-            <p className="text-xs text-slate-400 italic">No timeline entries found.</p>
+            <p className="text-xs text-slate-400 italic">No timeline entries found in database.</p>
           ) : (
-            <div className="space-y-2 pt-2">
+            <div className="space-y-2 pt-2 max-h-[600px] overflow-y-auto pr-2">
               {timeline.map((evt, idx) => (
                 <TimelineEvent key={evt.id} event={evt} isLast={idx === timeline.length - 1} />
               ))}

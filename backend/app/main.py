@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_user, require_roles
 from app.database import engine, Base, get_db
 from app.models.schemas import User
-from app.api import auth, batches, returns, disputes, destruction, certificates, audit
+from app.api import auth, batches, returns, disputes, destruction, certificates, audit, dashboard
 
 
 @asynccontextmanager
@@ -42,6 +42,7 @@ app.include_router(destruction.router)
 app.include_router(destruction.mfg_router)
 app.include_router(certificates.router)
 app.include_router(audit.router)
+app.include_router(dashboard.router)
 
 
 @app.get("/notifications")
