@@ -80,4 +80,14 @@ export const auditAPI = {
   getDashboardStats: () => api.get('/dashboard/stats'),
 };
 
+export const dashboardAPI = {
+  getPharmacyDashboard: () => api.get('/dashboard/pharmacy'),
+  getDistributorDashboard: () => api.get('/dashboard/distributor'),
+  getManufacturerDashboard: () => api.get('/dashboard/manufacturer'),
+  getFacilityDashboard: () => api.get('/dashboard/facility'),
+  getRegulatorDashboard: () => api.get('/dashboard/regulator'),
+  getRoleDashboard: (role) => api.get(`/dashboard/${role}`),
+  resetDashboard: (mode = 'fresh') => api.post('/dashboard/reset', { mode }),
+};
+
 export default api;

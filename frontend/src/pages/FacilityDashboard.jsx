@@ -1,49 +1,58 @@
 import React, { useState, useEffect } from 'react';
 import { Flame, FileCheck, CheckCircle, RefreshCw, Award } from 'lucide-react';
-import { destructionAPI, certificateAPI, batchAPI } from '../services/api';
+import { dashboardAPI, destructionAPI, certificateAPI } from '../services/api';
 import StatusBadge from '../components/StatusBadge';
 import ProgressTracker from '../components/ProgressTracker';
+import RecentActivityFeed from '../components/RecentActivityFeed';
+import ModeratorInsightCard from '../components/ModeratorInsightCard';
 
 export default function FacilityDashboard() {
-  const [batches, setBatches] = useState([]);
-  const [certificates, setCertificates] = useState([]);
-  const [qtyDestroyedInput, setQtyDestroyedInput] = useState(95); // 95 per spec
+  const [data, setData] = useState(null);
+  const [qtyDestroyedInput, setQtyDestroyedInput] = useState(95);
   const [certNumInput, setCertNumInput] = useState(`CERT-${Math.floor(100000 + Math.random() * 900000)}`);
   const [loading, setLoading] = useState(false);
   const [actionMsg, setActionMsg] = useState(null);
 
   useEffect(() => {
-    loadData();
+    fetchDashboard();
+
+    const interval = setInterval(() => {
+      if (!document.hidden) {
+        fetchDashboard(false);
+      }
+    }, 3500);
+
+    return () => clearInterval(interval);
   }, []);
 
-  const loadData = async () => {
+  const fetchDashboard = async (showLoading = false) => {
+    if (showLoading) setLoading(true);
     try {
-      const [batchesRes, certsRes] = await Promise.all([
-        batchAPI.getBatches(),
-        certificateAPI.getCertificates(),
-      ]);
-      setBatches(batchesRes.data);
-      setCertificates(certsRes.data);
+      const res = await dashboardAPI.getFacilityDashboard();
+      setData(res.data);
+      if (res.data?.batch?.quantity_to_destroy) {
+        setQtyDestroyedInput(res.data.batch.quantity_to_destroy);
+      }
     } catch (e) {
-      console.error(e);
+      console.error('Error fetching facility dashboard:', e);
+    } finally {
+      if (showLoading) setLoading(false);
     }
   };
 
-  const primaryBatch = batches.find((b) => b.batch_number === 'BATCH-001') || batches[0];
-
   const handleRecordDestruction = async (e) => {
     e.preventDefault();
-    if (!primaryBatch) return;
+    if (!data?.batch?.id) return;
     setLoading(true);
     setActionMsg(null);
 
     try {
-      await destructionAPI.recordDestruction(primaryBatch.id, Number(qtyDestroyedInput));
+      await destructionAPI.recordDestruction(data.batch.id, Number(qtyDestroyedInput));
       setActionMsg({
         type: 'success',
-        text: `Destruction recorded successfully! ${qtyDestroyedInput} packs destroyed. Batch status updated to DESTROYED.`,
+        text: `Incineration destruction recorded successfully! ${qtyDestroyedInput} packs destroyed. Status updated to DESTROYED.`,
       });
-      loadData();
+      fetchDashboard(false);
     } catch (err) {
       setActionMsg({ type: 'error', text: err.response?.data?.detail || 'Failed to record destruction.' });
     } finally {
@@ -53,21 +62,21 @@ export default function FacilityDashboard() {
 
   const handleGenerateCertificate = async (e) => {
     e.preventDefault();
-    if (!primaryBatch) return;
+    if (!data?.batch?.id) return;
     setLoading(true);
     setActionMsg(null);
 
     try {
       const res = await certificateAPI.createCertificate(
         certNumInput,
-        primaryBatch.id,
+        data.batch.id,
         Number(qtyDestroyedInput)
       );
       setActionMsg({
         type: 'success',
-        text: `Destruction Certificate generated! Cert #${res.data.certificate_number}. Ready for CDSCO Regulator verification.`,
+        text: `Destruction Certificate issued! Cert #${res.data.certificate_number}. Ready for CDSCO Regulator verification.`,
       });
-      loadData();
+      fetchDashboard(false);
     } catch (err) {
       setActionMsg({ type: 'error', text: err.response?.data?.detail || 'Failed to generate certificate.' });
     } finally {
@@ -75,24 +84,34 @@ export default function FacilityDashboard() {
     }
   };
 
+  const batch = data?.batch;
+  const currentStatus = batch?.current_status || 'NOT_INITIATED';
+  const certificate = data?.certificate;
+
   return (
     <div className="space-y-8">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-200 pb-5">
         <div>
-          <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
-            Biomedical Waste Facility Portal
-          </h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
+              Biomedical Waste Facility Portal
+            </h1>
+            <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-200">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              LIVE POLLING
+            </span>
+          </div>
           <p className="text-xs text-slate-500 mt-1">
-            Logged in as <span className="font-bold text-slate-700">BioClean Biomedical Waste Facility</span>
+            Logged in as <span className="font-bold text-slate-700">{data?.organization_name || 'BioClean Biomedical Waste Facility'}</span>
           </p>
         </div>
-        <button onClick={loadData} className="btn-secondary text-xs self-start sm:self-auto">
-          <RefreshCw className="w-3.5 h-3.5" /> Refresh Data
+        <button onClick={() => fetchDashboard(true)} className="btn-secondary text-xs self-start sm:self-auto">
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh Data
         </button>
       </div>
 
-      {/* Notification */}
+      {/* Action Notification */}
       {actionMsg && (
         <div
           className={`p-4 rounded-xl border text-xs font-medium flex items-center gap-2 ${
@@ -107,7 +126,7 @@ export default function FacilityDashboard() {
       )}
 
       {/* Active Batch Overview */}
-      {primaryBatch && (
+      {batch && (
         <div className="enterprise-card bg-white border border-slate-200 p-6 rounded-2xl shadow-sm space-y-4">
           <div className="flex items-center justify-between flex-wrap gap-4 border-b border-slate-100 pb-4">
             <div className="flex items-center gap-3">
@@ -115,20 +134,59 @@ export default function FacilityDashboard() {
                 <Flame className="w-6 h-6" />
               </div>
               <div>
-                <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block">Target Batch</span>
+                <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block">
+                  Designated Incineration Batch
+                </span>
                 <h2 className="text-xl font-extrabold text-slate-900">
-                  {primaryBatch.batch_number} — {primaryBatch.medicine_name || 'Augmentin Duo 625mg'}
+                  {batch.batch_number} — {batch.medicine_name}
                 </h2>
               </div>
             </div>
-            <StatusBadge status={primaryBatch.current_status} />
+            <StatusBadge status={batch.current_status} />
           </div>
 
-          <ProgressTracker currentStatus={primaryBatch.current_status} />
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs font-mono">
+            <div>
+              <span className="text-slate-400 block text-[10px] font-sans font-semibold">QUANTITY TO DESTROY</span>
+              <span className="font-extrabold text-rose-700 text-sm">{batch.quantity_to_destroy} Packs</span>
+            </div>
+            <div>
+              <span className="text-slate-400 block text-[10px] font-sans font-semibold">SCHEDULED STATUS</span>
+              <span className={`font-bold text-sm ${batch.scheduled_status === 'SCHEDULED' ? 'text-purple-700' : 'text-slate-500'}`}>
+                {batch.scheduled_status} ({batch.scheduled_date})
+              </span>
+            </div>
+            <div>
+              <span className="text-slate-400 block text-[10px] font-sans font-semibold">DESTRUCTION STATUS</span>
+              <span className={`font-bold text-sm ${batch.destruction_status === 'DESTROYED' ? 'text-rose-600' : 'text-slate-500'}`}>
+                {batch.destruction_status}
+              </span>
+            </div>
+            <div>
+              <span className="text-slate-400 block text-[10px] font-sans font-semibold">CERTIFICATE STATUS</span>
+              <span className={`font-bold text-xs ${data.certificate_status.includes('VERIFIED') ? 'text-emerald-700' : data.certificate_status.includes('ISSUED') ? 'text-blue-700' : 'text-slate-500'}`}>
+                {data.certificate_status === 'CERTIFICATE_VERIFIED_CLOSED'
+                  ? 'CERTIFICATE VERIFIED / CLOSED'
+                  : data.certificate_status === 'ISSUED_AWAITING_VERIFICATION'
+                  ? 'ISSUED (AWAITING REGULATOR)'
+                  : 'PENDING ISSUANCE'}
+              </span>
+            </div>
+          </div>
+
+          {/* Derived Next Action Banner */}
+          <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs flex items-center gap-2.5">
+            <span className="bg-rose-700 text-white text-[10px] font-extrabold px-2 py-0.5 rounded uppercase tracking-wider shrink-0">
+              NEXT ACTION
+            </span>
+            <span className="text-rose-900 font-medium">{data.next_action}</span>
+          </div>
+
+          <ProgressTracker currentStatus={batch.current_status} />
         </div>
       )}
 
-      {/* Grid: Destruction Record Form & Certificate Upload */}
+      {/* Grid: Record Destruction & Generate Certificate */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Record Destruction Form */}
         <div className="enterprise-card space-y-4">
@@ -144,7 +202,7 @@ export default function FacilityDashboard() {
                 type="text"
                 disabled
                 className="input-field bg-slate-100 text-xs font-mono"
-                value={`${primaryBatch?.batch_number || 'BATCH-001'} (${primaryBatch?.current_status || ''})`}
+                value={`${batch?.batch_number || 'BATCH-001'} (${currentStatus})`}
               />
             </div>
 
@@ -157,9 +215,10 @@ export default function FacilityDashboard() {
                 className="input-field font-mono text-sm"
                 value={qtyDestroyedInput}
                 onChange={(e) => setQtyDestroyedInput(e.target.value)}
+                disabled={currentStatus !== 'DESTRUCTION_SCHEDULED'}
               />
               <p className="text-[11px] text-slate-400 mt-1">
-                Default set to <strong>95</strong> (matching received resolved quantity).
+                Quantity automatically synchronized with verified intake count (95 packs).
               </p>
             </div>
 
@@ -167,16 +226,22 @@ export default function FacilityDashboard() {
               type="submit"
               disabled={
                 loading ||
-                ['DESTROYED', 'CERTIFICATE_VERIFIED', 'CLOSED'].includes(primaryBatch?.current_status)
+                currentStatus !== 'DESTRUCTION_SCHEDULED'
               }
               className="btn-danger w-full text-xs"
             >
-              {loading ? 'Recording...' : 'Record High-Temp Incineration Destruction'}
+              {loading
+                ? 'Recording...'
+                : currentStatus === 'DESTRUCTION_SCHEDULED'
+                ? 'Record High-Temp Incineration Destruction'
+                : batch?.destruction_status === 'DESTROYED'
+                ? 'Destruction Recorded (DESTROYED)'
+                : 'Awaiting Destruction Scheduling from Manufacturer'}
             </button>
           </form>
         </div>
 
-        {/* Certificate Generation & Upload */}
+        {/* Certificate Generation Card */}
         <div className="enterprise-card space-y-4">
           <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
             <Award className="w-5 h-5 text-blue-800" />
@@ -191,6 +256,7 @@ export default function FacilityDashboard() {
                 className="input-field font-mono uppercase text-xs"
                 value={certNumInput}
                 onChange={(e) => setCertNumInput(e.target.value)}
+                disabled={currentStatus !== 'DESTROYED' || certificate !== null}
               />
             </div>
 
@@ -201,7 +267,7 @@ export default function FacilityDashboard() {
                   type="text"
                   disabled
                   className="input-field bg-slate-100 text-xs font-mono"
-                  value={new Date().toISOString().split('T')[0]}
+                  value={certificate?.issued_date || new Date().toISOString().split('T')[0]}
                 />
               </div>
               <div>
@@ -210,42 +276,58 @@ export default function FacilityDashboard() {
                   type="text"
                   disabled
                   className="input-field bg-slate-100 text-xs font-mono"
-                  value={`${qtyDestroyedInput} Packs`}
+                  value={`${certificate?.quantity || qtyDestroyedInput} Packs`}
                 />
               </div>
             </div>
 
             <button
               type="submit"
-              disabled={loading || primaryBatch?.current_status !== 'DESTROYED'}
+              disabled={loading || currentStatus !== 'DESTROYED' || certificate !== null}
               className="btn-primary w-full text-xs"
             >
-              {loading ? 'Generating...' : 'Generate & Issue Destruction Certificate'}
+              {loading
+                ? 'Generating...'
+                : certificate
+                ? `Certificate Issued: #${certificate.certificate_number}`
+                : currentStatus === 'DESTROYED'
+                ? 'Generate & Issue Destruction Certificate'
+                : 'Batch Must Be DESTROYED First'}
             </button>
           </form>
 
-          {/* Certificate Log */}
-          {certificates.length > 0 && (
-            <div className="mt-4 border-t border-slate-100 pt-3">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2">
-                Issued Certificates
+          {/* Certificate Details Card */}
+          {certificate && (
+            <div className="mt-4 border-t border-slate-100 pt-3 space-y-2 font-mono text-xs">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                Certificate Details
               </span>
-              <div className="space-y-2">
-                {certificates.map((c) => (
-                  <div key={c.id} className="bg-slate-50 border border-slate-200 p-2.5 rounded-lg flex items-center justify-between text-xs font-mono">
-                    <div>
-                      <span className="font-bold text-slate-800">{c.certificate_number}</span>
-                      <span className="text-slate-500 block text-[10px]">Quantity: {c.quantity} Packs</span>
-                    </div>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${c.is_verified ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
-                      {c.is_verified ? 'Verified' : 'Pending Regulator'}
-                    </span>
-                  </div>
-                ))}
+              <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl flex items-center justify-between">
+                <div>
+                  <span className="font-bold text-slate-900">{certificate.certificate_number}</span>
+                  <span className="text-slate-500 block text-[11px] font-sans">
+                    Certified {certificate.quantity} packs • Issued: {certificate.issued_date}
+                  </span>
+                </div>
+                <span className={`px-2 py-1 rounded text-[10px] font-bold ${
+                  certificate.is_verified || currentStatus === 'CLOSED'
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : 'bg-amber-100 text-amber-800'
+                }`}>
+                  {certificate.is_verified || currentStatus === 'CLOSED'
+                    ? 'CERTIFICATE VERIFIED / CLOSED'
+                    : 'Awaiting CDSCO Regulator'}
+                </span>
               </div>
             </div>
           )}
         </div>
+      </div>
+
+      {/* Grid: AI Moderator & Recent Activity Feed */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <ModeratorInsightCard insight={data?.moderator_insight} />
+        <RecentActivityFeed events={data?.recent_activity} title="Recent Activity (BATCH-001)" />
       </div>
     </div>
   );

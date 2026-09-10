@@ -31,12 +31,14 @@ def create_audit_entry(
     actor_id: int,
     action: str,
     event_data: Optional[dict] = None,
+    timestamp: Optional[datetime.datetime] = None,
 ) -> AuditLog:
     """
     Create a tamper-evident audit log entry with SHA-256 hash chaining.
     Must be called inside the same DB transaction as the state mutation.
     """
-    timestamp = datetime.datetime.utcnow()
+    if timestamp is None:
+        timestamp = datetime.datetime.utcnow()
     event_data_json = json.dumps(event_data or {}, sort_keys=True, default=str)
     previous_hash = _get_previous_hash(db)
     current_hash = _compute_hash(

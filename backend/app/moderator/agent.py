@@ -160,6 +160,7 @@ def _call_gemini(
 
     try:
         from google import genai
+        from google.genai import types
 
         client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
@@ -172,14 +173,21 @@ def _call_gemini(
             event_data=event_data,
         )
 
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt,
-            config={
-                "system_instruction": SYSTEM_PROMPT,
-                "temperature": 0.2,
-            },
+        config = types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            temperature=0.2,
+            response_mime_type="application/json",
+            response_schema=ModeratorAnalysis,
         )
+
+        response = client.models.generate_content(
+            model=settings.GEMINI_MODEL,
+            contents=prompt,
+            config=config,
+        )
+
+        if not response or not response.text:
+            return None
 
         # Extract text from response
         text = response.text.strip()
@@ -199,3 +207,4 @@ def _call_gemini(
         print(f"Gemini API error: {e}")
         traceback.print_exc()
         return None
+

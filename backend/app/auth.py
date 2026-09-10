@@ -59,6 +59,26 @@ def get_current_user(
     return user
 
 
+oauth2_optional_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
+
+
+def get_optional_current_user(
+    token: Optional[str] = Depends(oauth2_optional_scheme),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """Decode JWT and return the user if valid, or None if missing/invalid."""
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        sub = payload.get("sub")
+        if sub is None:
+            return None
+        return db.query(User).filter(User.id == int(sub)).first()
+    except Exception:
+        return None
+
+
 def require_roles(*allowed_roles):
     """Dependency factory that enforces the current user has one of the given roles."""
     def _checker(current_user: User = Depends(get_current_user)):
