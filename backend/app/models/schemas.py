@@ -57,6 +57,26 @@ class RiskLevel(str, enum.Enum):
 
 
 # ──────────────────────────────────────────────
+#  Utility: Expiry Status
+# ──────────────────────────────────────────────
+
+def compute_expiry_status(expiry_date: datetime.date) -> str:
+    """
+    Derive a human-readable expiry label from a stored date.
+    Completely independent of the batch workflow current_status.
+      EXPIRED      — expiry_date < today
+      EXPIRING_SOON — today <= expiry_date <= today + 90 days
+      ACTIVE       — expiry_date > today + 90 days
+    """
+    today = datetime.date.today()
+    if expiry_date < today:
+        return "EXPIRED"
+    if expiry_date <= today + datetime.timedelta(days=90):
+        return "EXPIRING_SOON"
+    return "ACTIVE"
+
+
+# ──────────────────────────────────────────────
 #  SQLAlchemy ORM Models
 # ──────────────────────────────────────────────
 
@@ -76,9 +96,23 @@ class User(Base):
 class Medicine(Base):
     __tablename__ = "medicines"
 
+    # ── Core identifier (backward-compat: name == brand_name) ──
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
     manufacturer_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+    # ── Pharmaceutical detail fields (all nullable for backward compat) ──
+    brand_name = Column(String(255), nullable=True)
+    generic_name = Column(String(255), nullable=True)
+    strength = Column(String(100), nullable=True)
+    dosage_form = Column(String(100), nullable=True)
+    route_of_administration = Column(String(100), nullable=True)
+    composition = Column(Text, nullable=True)
+    pack_size = Column(String(50), nullable=True)
+    storage_conditions = Column(String(255), nullable=True)
+    mrp = Column(Float, nullable=True)
+    prescription_required = Column(Boolean, default=False, nullable=True)
+    manufacturing_date = Column(Date, nullable=True)
 
     manufacturer = relationship("User")
     batches = relationship("Batch", back_populates="medicine")
@@ -296,10 +330,17 @@ class BatchResponse(BaseModel):
     medicine_name: Optional[str] = None
     quantity: int
     expiry_date: datetime.date
+    # Derived from expiry_date at API time — NOT the workflow current_status
+    expiry_status: str = "ACTIVE"
     current_status: str
     current_location: Optional[str] = None
     reverse_chain_flag: bool
     destruction_status: Optional[str] = None
+    # Medicine detail fields (populated when available)
+    brand_name: Optional[str] = None
+    generic_name: Optional[str] = None
+    strength: Optional[str] = None
+    dosage_form: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -539,3 +580,52 @@ class DashboardStats(BaseModel):
     pending_destruction: int = 0
     verified_destruction: int = 0
     critical_fraud_alerts: int = 0
+
+
+# ──────────────────────────────────────────────
+#  Pydantic Schemas — Medicines
+# ──────────────────────────────────────────────
+
+class MedicineCreateRequest(BaseModel):
+    """Payload for MANUFACTURER to register a new drug batch."""
+    # Required core pharmaceutical identifiers
+    brand_name: str = Field(..., min_length=1, description="Proprietary/trade name")
+    generic_name: str = Field(..., min_length=1, description="INN / generic drug name")
+    strength: str = Field(..., min_length=1, description="e.g. '625mg', '500mg/5mL'")
+    dosage_form: str = Field(..., min_length=1, description="e.g. 'Tablet', 'Capsule', 'Syrup'")
+
+    # Required batch traceability fields
+    batch_number: str = Field(..., min_length=1, description="Unique batch identifier (e.g. MFG-2026-001)")
+    manufacturing_date: datetime.date = Field(..., description="Date of manufacture")
+    expiry_date: datetime.date = Field(..., description="Expiry date — must be after manufacturing_date")
+    quantity: int = Field(..., gt=0, description="Number of packs/units in batch")
+
+    # Optional supplementary fields
+    route_of_administration: Optional[str] = Field(None, description="e.g. 'Oral', 'Intravenous'")
+    composition: Optional[str] = Field(None, description="Active ingredients list")
+    pack_size: Optional[str] = Field(None, description="e.g. '10 tablets/blister'")
+    storage_conditions: Optional[str] = Field(None, description="e.g. 'Store below 25°C'")
+    mrp: Optional[float] = Field(None, gt=0, description="Maximum Retail Price (INR)")
+    prescription_required: bool = Field(False, description="Rx-only or OTC")
+
+
+class MedicineResponse(BaseModel):
+    """Full medicine record including linked batches."""
+    id: int
+    name: str
+    brand_name: Optional[str] = None
+    generic_name: Optional[str] = None
+    strength: Optional[str] = None
+    dosage_form: Optional[str] = None
+    route_of_administration: Optional[str] = None
+    composition: Optional[str] = None
+    pack_size: Optional[str] = None
+    storage_conditions: Optional[str] = None
+    mrp: Optional[float] = None
+    prescription_required: bool = False
+    manufacturing_date: Optional[datetime.date] = None
+    manufacturer_id: int
+    manufacturer_name: Optional[str] = None
+    batches: List[BatchResponse] = []
+
+    model_config = {"from_attributes": True}
