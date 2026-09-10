@@ -14,11 +14,16 @@ router = APIRouter(prefix="/batches", tags=["Batches"])
 
 
 def _batch_to_response(batch: Batch) -> BatchResponse:
-    """Convert a Batch ORM object to a BatchResponse, including medicine name."""
+    """Convert a Batch ORM object to a BatchResponse, including medicine and manufacturer names."""
+    m_name = None
+    if batch.medicine and batch.medicine.manufacturer:
+        m_name = batch.medicine.manufacturer.organization_name
+
     return BatchResponse(
         id=batch.id,
         batch_number=batch.batch_number,
         medicine_name=batch.medicine.name if batch.medicine else None,
+        manufacturer_name=m_name,
         quantity=batch.quantity,
         expiry_date=batch.expiry_date,
         current_status=batch.current_status.value if hasattr(batch.current_status, 'value') else batch.current_status,
