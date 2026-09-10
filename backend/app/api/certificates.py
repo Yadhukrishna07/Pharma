@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.auth import get_current_user
+from app.auth import get_current_user, require_roles, require_role
 from app.models.schemas import (
     Batch, BatchStatus, User, Certificate,
     CertificateCreateRequest, CertificateResponse,
@@ -13,15 +13,16 @@ from app.services.workflow_service import transition_state
 router = APIRouter(prefix="/certificates", tags=["Certificates"])
 
 
+@router.post("", response_model=CertificateResponse)
 @router.post("/", response_model=CertificateResponse)
 def create_certificate(
     req: CertificateCreateRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles("FACILITY")),
 ):
     """
-    Facility generates a destruction certificate.
+    Facility generates a destruction certificate. FACILITY only.
     Does NOT change batch status — awaits regulator verification.
     """
     batch = db.query(Batch).filter(Batch.id == req.batch_id).first()
@@ -60,16 +61,24 @@ def create_certificate(
     return CertificateResponse.model_validate(certificate)
 
 
+@router.get("", response_model=list[CertificateResponse])
 @router.get("/", response_model=list[CertificateResponse])
-def list_certificates(db: Session = Depends(get_db)):
-    """List all certificates."""
+def list_certificates(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List all certificates. Any authenticated user."""
     certs = db.query(Certificate).all()
     return [CertificateResponse.model_validate(c) for c in certs]
 
 
 @router.get("/{cert_id}", response_model=CertificateResponse)
-def get_certificate(cert_id: int, db: Session = Depends(get_db)):
-    """Get a single certificate."""
+def get_certificate(
+    cert_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get a single certificate. Any authenticated user."""
     cert = db.query(Certificate).filter(Certificate.id == cert_id).first()
     if not cert:
         raise HTTPException(status_code=404, detail="Certificate not found")
@@ -81,10 +90,10 @@ def verify_certificate(
     cert_id: int,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles("REGULATOR")),
 ):
     """
-    Regulator verifies a destruction certificate.
+    Regulator verifies a destruction certificate. REGULATOR only.
     Transitions batch: DESTROYED → CERTIFICATE_VERIFIED → CLOSED.
     """
     cert = db.query(Certificate).filter(Certificate.id == cert_id).first()
