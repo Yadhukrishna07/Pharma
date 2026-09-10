@@ -19,8 +19,6 @@ export default function Navbar({ currentUser, onRoleSwitch, onLogout }) {
   useEffect(() => {
     if (currentUser) {
       fetchNotificationsCount();
-      const interval = setInterval(fetchNotificationsCount, 10000);
-      return () => clearInterval(interval);
     }
   }, [currentUser]);
 

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.auth import get_current_user
+from app.auth import get_current_user, require_roles, require_role
 from app.models.schemas import (
     Batch, BatchStatus, User, UserRole, ReturnRequest,
     Handoff, ReturnRequestCreate, ReturnRequestResponse,
@@ -14,14 +14,15 @@ from app.services.workflow_service import transition_state, handle_discrepancy
 router = APIRouter(prefix="/returns", tags=["Returns"])
 
 
+@router.post("", response_model=ReturnRequestResponse)
 @router.post("/", response_model=ReturnRequestResponse)
 def create_return_request(
     req: ReturnRequestCreate,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles("PHARMACY")),
 ):
-    """Create a return request. Transitions batch to RETURN_REQUESTED."""
+    """Create a return request. PHARMACY only. Transitions batch to RETURN_REQUESTED."""
     batch = db.query(Batch).filter(Batch.id == req.batch_id).first()
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
@@ -57,9 +58,13 @@ def create_return_request(
     return ReturnRequestResponse.model_validate(return_request)
 
 
+@router.get("", response_model=list[ReturnRequestResponse])
 @router.get("/", response_model=list[ReturnRequestResponse])
-def list_returns(db: Session = Depends(get_db)):
-    """List all return requests."""
+def list_returns(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("PHARMACY", "DISTRIBUTOR", "REGULATOR")),
+):
+    """List all return requests. PHARMACY, DISTRIBUTOR, REGULATOR only."""
     returns = db.query(ReturnRequest).all()
     return [ReturnRequestResponse.model_validate(r) for r in returns]
 
@@ -69,9 +74,9 @@ def confirm_pickup(
     return_id: int,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles("DISTRIBUTOR")),
 ):
-    """Distributor confirms pickup. Transitions batch to PICKUP_CONFIRMED."""
+    """Distributor confirms pickup. DISTRIBUTOR only. Transitions batch to PICKUP_CONFIRMED."""
     ret = db.query(ReturnRequest).filter(ReturnRequest.id == return_id).first()
     if not ret:
         raise HTTPException(status_code=404, detail="Return request not found")
@@ -106,10 +111,10 @@ def receive_return(
     req: ReceiveRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles("DISTRIBUTOR")),
 ):
     """
-    Distributor receives the return.
+    Distributor receives the return. DISTRIBUTOR only.
     - If received_quantity != declared_quantity → DISPUTED + creates Dispute record.
     - If quantities match → RECEIVED_BY_DISTRIBUTOR.
     """

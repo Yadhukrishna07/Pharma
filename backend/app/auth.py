@@ -25,6 +25,9 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
+    # Ensure 'sub' is always a string (RFC 7519 requires string subject)
+    if "sub" in to_encode:
+        to_encode["sub"] = str(to_encode["sub"])
     expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
@@ -43,10 +46,11 @@ def get_current_user(
         )
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        user_id: int = payload.get("sub")
-        if user_id is None:
+        sub = payload.get("sub")
+        if sub is None:
             raise HTTPException(status_code=401, detail="Invalid token payload")
-    except JWTError:
+        user_id: int = int(sub)  # sub is stored as string per RFC 7519
+    except (JWTError, ValueError):
         raise HTTPException(status_code=401, detail="Could not validate credentials")
 
     user = db.query(User).filter(User.id == user_id).first()
@@ -55,10 +59,19 @@ def get_current_user(
     return user
 
 
-def require_role(*roles):
+def require_roles(*allowed_roles):
     """Dependency factory that enforces the current user has one of the given roles."""
     def _checker(current_user: User = Depends(get_current_user)):
-        if current_user.role not in roles and current_user.role.value not in [r.value if hasattr(r, 'value') else r for r in roles]:
-            raise HTTPException(status_code=403, detail=f"Role {current_user.role} not permitted")
+        role_strings = [r.value if hasattr(r, "value") else str(r) for r in allowed_roles]
+        user_role_str = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+        if user_role_str not in role_strings:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Role '{user_role_str}' not permitted. Allowed roles: {role_strings}",
+            )
         return current_user
     return _checker
+
+
+# Alias for backward-compatibility
+require_role = require_roles

@@ -294,7 +294,6 @@ class BatchResponse(BaseModel):
     id: int
     batch_number: str
     medicine_name: Optional[str] = None
-    manufacturer_name: Optional[str] = None
     quantity: int
     expiry_date: datetime.date
     current_status: str

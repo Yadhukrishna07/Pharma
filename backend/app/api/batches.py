@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.auth import get_current_user
+from app.auth import get_current_user, require_roles, require_role
 from app.models.schemas import (
     Batch, User, Medicine, WorkflowEvent, ModeratorEvent,
     BatchResponse, BatchScanRequest, BatchScanResponse,
@@ -14,16 +14,11 @@ router = APIRouter(prefix="/batches", tags=["Batches"])
 
 
 def _batch_to_response(batch: Batch) -> BatchResponse:
-    """Convert a Batch ORM object to a BatchResponse, including medicine and manufacturer names."""
-    m_name = None
-    if batch.medicine and batch.medicine.manufacturer:
-        m_name = batch.medicine.manufacturer.organization_name
-
+    """Convert a Batch ORM object to a BatchResponse, including medicine name."""
     return BatchResponse(
         id=batch.id,
         batch_number=batch.batch_number,
         medicine_name=batch.medicine.name if batch.medicine else None,
-        manufacturer_name=m_name,
         quantity=batch.quantity,
         expiry_date=batch.expiry_date,
         current_status=batch.current_status.value if hasattr(batch.current_status, 'value') else batch.current_status,
@@ -33,16 +28,24 @@ def _batch_to_response(batch: Batch) -> BatchResponse:
     )
 
 
+@router.get("", response_model=list[BatchResponse])
 @router.get("/", response_model=list[BatchResponse])
-def list_batches(db: Session = Depends(get_db)):
-    """List all batches."""
+def list_batches(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List all batches. Requires any authenticated user."""
     batches = db.query(Batch).all()
     return [_batch_to_response(b) for b in batches]
 
 
 @router.get("/{batch_id}", response_model=BatchResponse)
-def get_batch(batch_id: int, db: Session = Depends(get_db)):
-    """Get a single batch by ID."""
+def get_batch(
+    batch_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get a single batch by ID. Requires any authenticated user."""
     batch = db.query(Batch).filter(Batch.id == batch_id).first()
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
@@ -54,7 +57,7 @@ def scan_batch(
     req: BatchScanRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles("PHARMACY", "REGULATOR")),
 ):
     """
     Scan a batch by batch_number.
@@ -86,7 +89,11 @@ def scan_batch(
 
 
 @router.get("/{batch_id}/timeline", response_model=list[WorkflowEventResponse])
-def get_batch_timeline(batch_id: int, db: Session = Depends(get_db)):
+def get_batch_timeline(
+    batch_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Get the full workflow event timeline for a batch."""
     batch = db.query(Batch).filter(Batch.id == batch_id).first()
     if not batch:
@@ -120,8 +127,12 @@ def get_batch_timeline(batch_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{batch_id}/moderator-events", response_model=list[ModeratorEventResponse])
-def get_moderator_events(batch_id: int, db: Session = Depends(get_db)):
-    """Get AI moderator analysis events for a batch."""
+def get_moderator_events(
+    batch_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("REGULATOR", "MANUFACTURER")),
+):
+    """Get AI moderator analysis events for a batch. REGULATOR and MANUFACTURER only."""
     events = (
         db.query(ModeratorEvent)
         .filter(ModeratorEvent.batch_id == batch_id)

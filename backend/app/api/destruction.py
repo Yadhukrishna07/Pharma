@@ -1,8 +1,10 @@
+from typing import Optional
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.auth import get_current_user
+from app.auth import get_current_user, require_roles, require_role
 from app.models.schemas import (
     Batch, BatchStatus, User, UserRole,
     DestructionRecord, Handoff,
@@ -12,6 +14,51 @@ from app.models.schemas import (
 from app.services.workflow_service import transition_state
 
 router = APIRouter(prefix="/destruction", tags=["Destruction"])
+mfg_router = APIRouter(prefix="/manufacturer", tags=["Manufacturer"])
+
+
+class ManufacturerReceiveRequest(BaseModel):
+    batch_id: int
+    notes: Optional[str] = None
+
+
+@mfg_router.post("/receive")
+def manufacturer_receive(
+    req: ManufacturerReceiveRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("MANUFACTURER")),
+):
+    """Manufacturer receives a batch. MANUFACTURER only."""
+    batch = db.query(Batch).filter(Batch.id == req.batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    current_status = batch.current_status
+    if hasattr(current_status, "value"):
+        current_status = current_status.value
+
+    if current_status != BatchStatus.RECEIVED_BY_MANUFACTURER.value:
+        try:
+            transition_state(
+                db=db,
+                batch=batch,
+                target_status=BatchStatus.RECEIVED_BY_MANUFACTURER.value,
+                actor_id=current_user.id,
+                event_type="MANUFACTURER_RECEIVED",
+                event_data={"notes": req.notes},
+                background_tasks=background_tasks,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    batch.current_location = "Manufacturer Warehouse"
+    db.commit()
+    return {
+        "status": "received",
+        "message": "Batch received by manufacturer",
+        "batch_status": BatchStatus.RECEIVED_BY_MANUFACTURER.value,
+    }
 
 
 @router.post("/handoff", response_model=HandoffResponse)
@@ -19,10 +66,10 @@ def manufacturer_handoff(
     req: HandoffRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("MANUFACTURER")),
 ):
     """
-    Manufacturer confirms handoff to the next stage.
+    Manufacturer confirms handoff to the next stage. MANUFACTURER only.
     If batch is RECEIVED_BY_DISTRIBUTOR or DISPUTED→resolved, transitions
     to RECEIVED_BY_MANUFACTURER.
     """
@@ -73,10 +120,10 @@ def schedule_destruction(
     req: DestructionScheduleRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles("MANUFACTURER")),
 ):
     """
-    Manufacturer schedules destruction.
+    Manufacturer schedules destruction. MANUFACTURER only.
     Transitions batch to DESTRUCTION_SCHEDULED.
     """
     batch = db.query(Batch).filter(Batch.id == req.batch_id).first()
@@ -113,15 +160,16 @@ def schedule_destruction(
     }
 
 
+@router.post("/confirm", response_model=DestructionRecordResponse)
 @router.post("/record", response_model=DestructionRecordResponse)
 def record_destruction(
     req: DestructionRecordCreate,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles("FACILITY")),
 ):
     """
-    Facility records destruction of a batch.
+    Facility records destruction of a batch. FACILITY only.
     Transitions batch to DESTROYED.
     """
     batch = db.query(Batch).filter(Batch.id == req.batch_id).first()
