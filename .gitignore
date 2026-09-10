@@ -9,3 +9,7 @@ frontend/dist/
 frontend/.vite/
 .DS_Store
 Thumbs.db
+backend/venv/
+frontend/node_modules/
+**/__pycache__/
+*.pyc
