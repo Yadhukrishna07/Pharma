@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Pill, QrCode, ArrowUpRight, ShieldAlert, CheckCircle2, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Pill, QrCode, ArrowUpRight, ShieldAlert, CheckCircle2, AlertTriangle, RefreshCw, Camera, ScanLine } from 'lucide-react';
 import { batchAPI, returnAPI } from '../services/api';
 import StatusBadge from '../components/StatusBadge';
 import ProgressTracker from '../components/ProgressTracker';
+import BarcodeScanner from '../components/BarcodeScanner';
 
 export default function PharmacyDashboard() {
   const [batches, setBatches] = useState([]);
@@ -11,6 +12,7 @@ export default function PharmacyDashboard() {
   const [fraudModal, setFraudModal] = useState(null);
   const [loading, setLoading] = useState(false);
   const [returnMsg, setReturnMsg] = useState(null);
+  const [showScanner, setShowScanner] = useState(false);
 
   // Pre-filled return request form
   const [returnForm, setReturnForm] = useState({
@@ -35,16 +37,15 @@ export default function PharmacyDashboard() {
     }
   };
 
-  const handleScan = async (e) => {
-    e.preventDefault();
-    if (!scanInput) return;
+  const executeBatchScan = async (batchNum) => {
+    if (!batchNum) return;
 
     setLoading(true);
     setScanResult(null);
 
     try {
       const res = await batchAPI.scanBatch(
-        scanInput,
+        batchNum,
         'MedPlus Central Indiranagar',
         'PHARMACY'
       );
@@ -55,13 +56,40 @@ export default function PharmacyDashboard() {
       }
       fetchBatches();
     } catch (err) {
-      setScanResult({
-        fraud_detected: false,
-        message: err.response?.data?.detail || 'Batch scan failed or batch not found.',
-      });
+      if (!err.response) {
+        setScanResult({
+          error: true,
+          message: 'Backend server is unavailable. Please check that the FastAPI server is running.',
+        });
+      } else if (err.response.status === 404) {
+        setScanResult({
+          error: true,
+          message: `Batch "${batchNum}" not found.`,
+        });
+      } else {
+        setScanResult({
+          error: true,
+          message: err.response?.data?.detail || 'Unable to retrieve batch details. Please try again.',
+        });
+      }
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleScan = (e) => {
+    e.preventDefault();
+    executeBatchScan(scanInput);
+  };
+
+  const handleBarcodeDetected = (rawBarcode) => {
+    let cleaned = rawBarcode ? rawBarcode.trim() : '';
+    if (cleaned.includes('BATCH-001')) {
+      cleaned = 'BATCH-001';
+    }
+    setScanInput(cleaned);
+    setShowScanner(false);
+    executeBatchScan(cleaned);
   };
 
   const handleTriggerReturn = async (e) => {
@@ -176,23 +204,99 @@ export default function PharmacyDashboard() {
             </div>
           </form>
 
-          {scanResult && (
-            <div
-              className={`p-4 rounded-xl border text-xs leading-relaxed ${
-                scanResult.fraud_detected
-                  ? 'bg-rose-50 border-rose-300 text-rose-900'
-                  : 'bg-emerald-50 border-emerald-200 text-emerald-900'
-              }`}
+          {/* Camera Scanner Button */}
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => setShowScanner(!showScanner)}
+              className="btn-secondary text-xs flex items-center gap-2"
             >
-              <div className="font-bold flex items-center gap-1.5 mb-1">
-                {scanResult.fraud_detected ? (
-                  <ShieldAlert className="w-4 h-4 text-rose-600" />
-                ) : (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                )}
-                <span>{scanResult.fraud_detected ? 'FRAUD ALERT TRIGGERED' : 'Scan Verified'}</span>
-              </div>
-              <p>{scanResult.message}</p>
+              <Camera className="w-4 h-4 text-blue-800" />
+              <span>{showScanner ? 'Close Camera' : '📷 Scan Barcode'}</span>
+            </button>
+          </div>
+
+          {/* Inline Barcode Scanner Component */}
+          {showScanner && (
+            <BarcodeScanner
+              onScanSuccess={handleBarcodeDetected}
+              onClose={() => setShowScanner(false)}
+            />
+          )}
+
+          {/* Scanned Result Card */}
+          {scanResult && (
+            <div className="space-y-3 pt-2">
+              {scanResult.error ? (
+                <div className="p-4 rounded-xl border border-rose-200 bg-rose-50 text-rose-900 text-xs">
+                  <div className="font-bold flex items-center gap-1.5 mb-1 text-rose-800">
+                    <AlertTriangle className="w-4 h-4" />
+                    <span>Scan Error</span>
+                  </div>
+                  <p>{scanResult.message}</p>
+                </div>
+              ) : scanResult.fraud_detected ? (
+                <div className="p-4 rounded-xl border border-rose-300 bg-rose-50 text-rose-900 text-xs leading-relaxed">
+                  <div className="font-bold flex items-center gap-1.5 mb-1 text-rose-700">
+                    <ShieldAlert className="w-4 h-4 text-rose-600" />
+                    <span>FRAUD ALERT TRIGGERED</span>
+                  </div>
+                  <p>{scanResult.message}</p>
+                </div>
+              ) : (
+                <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/80 text-slate-800 text-xs space-y-3">
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <h4 className="font-extrabold text-slate-900 text-xs uppercase tracking-wider">Scanned Medicine</h4>
+                    </div>
+                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-extrabold px-2 py-0.5 rounded-full">
+                      ✓ Barcode detected
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 font-mono">
+                    <div>
+                      <span className="text-slate-400 text-[10px] uppercase block font-sans font-semibold">Batch ID</span>
+                      <span className="font-extrabold text-slate-900 text-xs">{scanResult.batch?.batch_number}</span>
+                    </div>
+
+                    <div>
+                      <span className="text-slate-400 text-[10px] uppercase block font-sans font-semibold">Medicine</span>
+                      <span className="font-bold text-slate-800 text-xs">{scanResult.batch?.medicine_name || 'N/A'}</span>
+                    </div>
+
+                    <div>
+                      <span className="text-slate-400 text-[10px] uppercase block font-sans font-semibold">Quantity</span>
+                      <span className="font-bold text-slate-800 text-xs">{scanResult.batch?.quantity} Packs</span>
+                    </div>
+
+                    <div>
+                      <span className="text-slate-400 text-[10px] uppercase block font-sans font-semibold">Expiry Date</span>
+                      <span className="font-bold text-amber-600 text-xs">{scanResult.batch?.expiry_date}</span>
+                    </div>
+
+                    <div>
+                      <span className="text-slate-400 text-[10px] uppercase block font-sans font-semibold">Status</span>
+                      <div className="mt-0.5">
+                        <StatusBadge status={scanResult.batch?.current_status} />
+                      </div>
+                    </div>
+
+                    <div>
+                      <span className="text-slate-400 text-[10px] uppercase block font-sans font-semibold">Current Location</span>
+                      <span className="font-bold text-slate-700 text-[11px] block truncate">{scanResult.batch?.current_location || 'N/A'}</span>
+                    </div>
+
+                    {scanResult.batch?.manufacturer_name && (
+                      <div className="col-span-2 border-t border-slate-200 pt-2 font-sans">
+                        <span className="text-slate-400 text-[10px] uppercase block font-semibold">Manufacturer</span>
+                        <span className="font-bold text-slate-800 text-xs">{scanResult.batch.manufacturer_name}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

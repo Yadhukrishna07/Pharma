@@ -17,8 +17,7 @@ from app.services.audit_service import create_audit_entry
 # ──────────────────────────────────────────────
 
 VALID_TRANSITIONS = {
-    BatchStatus.ACTIVE.value: [BatchStatus.EXPIRING.value, BatchStatus.EXPIRED.value],
-    BatchStatus.EXPIRING.value: [BatchStatus.EXPIRED.value],
+    BatchStatus.ACTIVE.value: [BatchStatus.EXPIRED.value],
     BatchStatus.EXPIRED.value: [BatchStatus.RETURN_REQUESTED.value],
     BatchStatus.RETURN_REQUESTED.value: [BatchStatus.PICKUP_CONFIRMED.value],
     BatchStatus.PICKUP_CONFIRMED.value: [BatchStatus.RECEIVED_BY_DISTRIBUTOR.value],
