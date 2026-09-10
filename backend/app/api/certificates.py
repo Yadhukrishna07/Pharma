@@ -3,40 +3,40 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.auth import get_current_user, require_roles, require_role
+from app.auth import get_current_user, require_role
 from app.models.schemas import (
-    Batch, BatchStatus, User, Certificate,
+    Batch, BatchStatus, User, UserRole, Certificate,
     CertificateCreateRequest, CertificateResponse,
 )
 from app.services.workflow_service import transition_state
+from app.services.notification_service import notify_by_role
 
 router = APIRouter(prefix="/certificates", tags=["Certificates"])
 
 
-@router.post("", response_model=CertificateResponse)
 @router.post("/", response_model=CertificateResponse)
 def create_certificate(
     req: CertificateCreateRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("FACILITY")),
+    current_user: User = Depends(require_role(UserRole.FACILITY)),
 ):
     """
-    Facility generates a destruction certificate. FACILITY only.
+    Facility generates a destruction certificate.
     Does NOT change batch status — awaits regulator verification.
+    Prerequisite: Batch must be in DESTROYED state.
     """
     batch = db.query(Batch).filter(Batch.id == req.batch_id).first()
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
 
-    # Check that batch is in DESTROYED state
     current_status = batch.current_status
     if hasattr(current_status, "value"):
         current_status = current_status.value
     if current_status != BatchStatus.DESTROYED.value:
         raise HTTPException(
             status_code=400,
-            detail=f"Batch must be in DESTROYED state to generate certificate. Current: {current_status}",
+            detail=f"Batch must be in DESTROYED state to generate certificate. Current state: {current_status}",
         )
 
     # Check for existing certificate
@@ -55,30 +55,30 @@ def create_certificate(
         is_verified=False,
     )
     db.add(certificate)
+
+    notify_by_role(
+        db=db,
+        roles=["REGULATOR", "MANUFACTURER"],
+        title="Destruction Certificate Issued",
+        message=f"Certificate #{req.certificate_number} issued for Batch #{batch.batch_number}. Awaiting regulator verification.",
+    )
+
     db.commit()
     db.refresh(certificate)
 
     return CertificateResponse.model_validate(certificate)
 
 
-@router.get("", response_model=list[CertificateResponse])
 @router.get("/", response_model=list[CertificateResponse])
-def list_certificates(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """List all certificates. Any authenticated user."""
+def list_certificates(db: Session = Depends(get_db)):
+    """List all certificates."""
     certs = db.query(Certificate).all()
     return [CertificateResponse.model_validate(c) for c in certs]
 
 
 @router.get("/{cert_id}", response_model=CertificateResponse)
-def get_certificate(
-    cert_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Get a single certificate. Any authenticated user."""
+def get_certificate(cert_id: int, db: Session = Depends(get_db)):
+    """Get a single certificate."""
     cert = db.query(Certificate).filter(Certificate.id == cert_id).first()
     if not cert:
         raise HTTPException(status_code=404, detail="Certificate not found")
@@ -90,10 +90,10 @@ def verify_certificate(
     cert_id: int,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("REGULATOR")),
+    current_user: User = Depends(require_role(UserRole.REGULATOR)),
 ):
     """
-    Regulator verifies a destruction certificate. REGULATOR only.
+    Regulator verifies a destruction certificate.
     Transitions batch: DESTROYED → CERTIFICATE_VERIFIED → CLOSED.
     """
     cert = db.query(Certificate).filter(Certificate.id == cert_id).first()
@@ -106,6 +106,15 @@ def verify_certificate(
     batch = db.query(Batch).filter(Batch.id == cert.batch_id).first()
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
+
+    current_status = batch.current_status
+    if hasattr(current_status, "value"):
+        current_status = current_status.value
+    if current_status != BatchStatus.DESTROYED.value:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Batch must be in DESTROYED state for certificate verification. Current state: {current_status}",
+        )
 
     # Transition to CERTIFICATE_VERIFIED
     try:
@@ -144,6 +153,14 @@ def verify_certificate(
 
     cert.is_verified = True
     batch.current_location = "Closed — Regulatory Verified"
+
+    notify_by_role(
+        db=db,
+        roles=["PHARMACY", "DISTRIBUTOR", "MANUFACTURER", "FACILITY", "REGULATOR"],
+        title="Batch Lifecycle CLOSED",
+        message=f"Batch #{batch.batch_number} verified by CDSCO Regulator. Lifecycle complete & CLOSED.",
+    )
+
     db.commit()
 
     return {

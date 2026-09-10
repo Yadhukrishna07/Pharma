@@ -25,6 +25,7 @@ class UserRole(str, enum.Enum):
 
 class BatchStatus(str, enum.Enum):
     ACTIVE = "ACTIVE"
+    EXPIRING = "EXPIRING"
     EXPIRED = "EXPIRED"
     RETURN_REQUESTED = "RETURN_REQUESTED"
     PICKUP_CONFIRMED = "PICKUP_CONFIRMED"

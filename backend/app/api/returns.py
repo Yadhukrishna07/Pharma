@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.auth import get_current_user, require_roles, require_role
+from app.auth import get_current_user, require_role
 from app.models.schemas import (
     Batch, BatchStatus, User, UserRole, ReturnRequest,
     Handoff, ReturnRequestCreate, ReturnRequestResponse,
@@ -10,19 +10,19 @@ from app.models.schemas import (
     HandoffResponse,
 )
 from app.services.workflow_service import transition_state, handle_discrepancy
+from app.services.notification_service import notify_by_role
 
 router = APIRouter(prefix="/returns", tags=["Returns"])
 
 
-@router.post("", response_model=ReturnRequestResponse)
 @router.post("/", response_model=ReturnRequestResponse)
 def create_return_request(
     req: ReturnRequestCreate,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("PHARMACY")),
+    current_user: User = Depends(require_role(UserRole.PHARMACY)),
 ):
-    """Create a return request. PHARMACY only. Transitions batch to RETURN_REQUESTED."""
+    """Create a return request. Transitions batch to RETURN_REQUESTED."""
     batch = db.query(Batch).filter(Batch.id == req.batch_id).first()
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
@@ -52,19 +52,23 @@ def create_return_request(
         status="PENDING",
     )
     db.add(return_request)
+
+    notify_by_role(
+        db=db,
+        roles=["DISTRIBUTOR"],
+        title="New Return Request",
+        message=f"Return request initiated for Batch #{batch.batch_number} (Declared Qty: {req.declared_quantity}).",
+    )
+
     db.commit()
     db.refresh(return_request)
 
     return ReturnRequestResponse.model_validate(return_request)
 
 
-@router.get("", response_model=list[ReturnRequestResponse])
 @router.get("/", response_model=list[ReturnRequestResponse])
-def list_returns(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("PHARMACY", "DISTRIBUTOR", "REGULATOR")),
-):
-    """List all return requests. PHARMACY, DISTRIBUTOR, REGULATOR only."""
+def list_returns(db: Session = Depends(get_db)):
+    """List all return requests."""
     returns = db.query(ReturnRequest).all()
     return [ReturnRequestResponse.model_validate(r) for r in returns]
 
@@ -74,9 +78,9 @@ def confirm_pickup(
     return_id: int,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("DISTRIBUTOR")),
+    current_user: User = Depends(require_role(UserRole.DISTRIBUTOR)),
 ):
-    """Distributor confirms pickup. DISTRIBUTOR only. Transitions batch to PICKUP_CONFIRMED."""
+    """Distributor confirms pickup. Transitions batch to PICKUP_CONFIRMED."""
     ret = db.query(ReturnRequest).filter(ReturnRequest.id == return_id).first()
     if not ret:
         raise HTTPException(status_code=404, detail="Return request not found")
@@ -100,6 +104,14 @@ def confirm_pickup(
 
     ret.status = "PICKED_UP"
     batch.current_location = "In Transit — Distributor"
+
+    notify_by_role(
+        db=db,
+        roles=["PHARMACY", "MANUFACTURER"],
+        title="Pickup Confirmed",
+        message=f"Distributor has confirmed pickup for Batch #{batch.batch_number}.",
+    )
+
     db.commit()
 
     return {"status": "ok", "message": "Pickup confirmed", "batch_status": BatchStatus.PICKUP_CONFIRMED.value}
@@ -111,10 +123,10 @@ def receive_return(
     req: ReceiveRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("DISTRIBUTOR")),
+    current_user: User = Depends(require_role(UserRole.DISTRIBUTOR)),
 ):
     """
-    Distributor receives the return. DISTRIBUTOR only.
+    Distributor receives the return.
     - If received_quantity != declared_quantity → DISPUTED + creates Dispute record.
     - If quantities match → RECEIVED_BY_DISTRIBUTOR.
     """
@@ -158,6 +170,14 @@ def receive_return(
 
         ret.status = "DISPUTED"
         batch.current_location = "Distributor Warehouse — Under Dispute"
+
+        notify_by_role(
+            db=db,
+            roles=["PHARMACY", "MANUFACTURER", "REGULATOR"],
+            title="Discrepancy Detected (Disputed)",
+            message=f"Discrepancy for Batch #{batch.batch_number}: declared {declared_qty}, received {received_qty}. Batch marked DISPUTED.",
+        )
+
         db.commit()
 
         return {
@@ -196,6 +216,14 @@ def receive_return(
 
         ret.status = "RECEIVED"
         batch.current_location = "Distributor Warehouse"
+
+        notify_by_role(
+            db=db,
+            roles=["MANUFACTURER"],
+            title="Return Received by Distributor",
+            message=f"Batch #{batch.batch_number} received at distributor warehouse with matching quantities.",
+        )
+
         db.commit()
 
         return {
