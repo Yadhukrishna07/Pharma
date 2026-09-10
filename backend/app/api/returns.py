@@ -14,7 +14,6 @@ from app.services.workflow_service import transition_state, handle_discrepancy
 router = APIRouter(prefix="/returns", tags=["Returns"])
 
 
-@router.post("", response_model=ReturnRequestResponse)
 @router.post("/", response_model=ReturnRequestResponse)
 def create_return_request(
     req: ReturnRequestCreate,
@@ -22,11 +21,60 @@ def create_return_request(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("PHARMACY")),
 ):
-    """Create a return request. PHARMACY only. Transitions batch to RETURN_REQUESTED."""
+    """
+    Create a return request. PHARMACY only.
+    - Validates batch exists and is in EXPIRED or ACTIVE status
+    - Validates declared quantity is positive and within batch total
+    - Validates distributor exists and has DISTRIBUTOR role
+    - Checks for existing active return requests on this batch
+    - Transitions batch to RETURN_REQUESTED
+    - Persists the ReturnRequest record
+    """
+    # 1. Validate batch existence
     batch = db.query(Batch).filter(Batch.id == req.batch_id).first()
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
 
+    # 2. Validate batch status (must be EXPIRED or ACTIVE to initiate return)
+    current_status = batch.current_status.value if hasattr(batch.current_status, "value") else str(batch.current_status)
+    if current_status not in [BatchStatus.EXPIRED.value, BatchStatus.ACTIVE.value]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot initiate return for batch with status '{current_status}'. Batch must be in EXPIRED or ACTIVE status.",
+        )
+
+    # 3. Validate declared quantity
+    if req.declared_quantity <= 0:
+        raise HTTPException(status_code=400, detail="Declared quantity must be greater than 0")
+    if req.declared_quantity > batch.quantity:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Declared quantity ({req.declared_quantity}) exceeds total batch quantity ({batch.quantity})",
+        )
+
+    # 4. Validate distributor existence and role
+    distributor = db.query(User).filter(User.id == req.distributor_id).first()
+    if not distributor:
+        raise HTTPException(status_code=400, detail=f"Distributor with ID {req.distributor_id} not found")
+    dist_role = distributor.role.value if hasattr(distributor.role, "value") else str(distributor.role)
+    if dist_role != UserRole.DISTRIBUTOR.value:
+        raise HTTPException(
+            status_code=400,
+            detail=f"User with ID {req.distributor_id} ({distributor.organization_name}) is not a DISTRIBUTOR (role: {dist_role})",
+        )
+
+    # 5. Check for existing active return request on this batch
+    existing_return = db.query(ReturnRequest).filter(
+        ReturnRequest.batch_id == req.batch_id,
+        ReturnRequest.status.in_(["PENDING", "PICKED_UP", "RECEIVED", "DISPUTED"]),
+    ).first()
+    if existing_return:
+        raise HTTPException(
+            status_code=400,
+            detail=f"A return request (ID: {existing_return.id}, status: {existing_return.status}) already exists for batch {batch.batch_number}",
+        )
+
+    # 6. Execute state transition
     try:
         transition_state(
             db=db,
@@ -45,6 +93,7 @@ def create_return_request(
 
     batch.reverse_chain_flag = True
 
+    # 7. Persist return request
     return_request = ReturnRequest(
         batch_id=req.batch_id,
         declared_quantity=req.declared_quantity,
@@ -58,7 +107,6 @@ def create_return_request(
     return ReturnRequestResponse.model_validate(return_request)
 
 
-@router.get("", response_model=list[ReturnRequestResponse])
 @router.get("/", response_model=list[ReturnRequestResponse])
 def list_returns(
     db: Session = Depends(get_db),

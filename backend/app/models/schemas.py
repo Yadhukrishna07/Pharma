@@ -322,9 +322,9 @@ class BatchScanResponse(BaseModel):
 # ──────────────────────────────────────────────
 
 class ReturnRequestCreate(BaseModel):
-    batch_id: int
-    declared_quantity: int
-    distributor_id: int
+    batch_id: int = Field(..., gt=0, description="ID of the batch being returned")
+    declared_quantity: int = Field(..., gt=0, description="Declared quantity to return (must be > 0)")
+    distributor_id: int = Field(..., gt=0, description="ID of the designated distributor")
 
 
 class ReturnRequestResponse(BaseModel):

@@ -173,7 +173,7 @@ def _call_gemini(
         )
 
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model=settings.GEMINI_MODEL,
             contents=prompt,
             config={
                 "system_instruction": SYSTEM_PROMPT,
