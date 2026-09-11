@@ -9,7 +9,7 @@ from app.database import engine, Base, get_db
 from app.models.schemas import User
 import os
 from fastapi.staticfiles import StaticFiles
-from app.api import auth, batches, returns, disputes, destruction, certificates, audit, dashboard, evidence
+from app.api import auth, batches, returns, disputes, destruction, certificates, audit, dashboard, evidence, chatbot
 
 
 @asynccontextmanager
@@ -29,7 +29,13 @@ app = FastAPI(
 # CORS — allow frontend dev server
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "http://localhost:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -51,6 +57,7 @@ app.include_router(certificates.router)
 app.include_router(audit.router)
 app.include_router(dashboard.router)
 app.include_router(evidence.router)
+app.include_router(chatbot.router)
 
 
 @app.get("/notifications")
