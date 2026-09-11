@@ -4,6 +4,8 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from app.models.schemas import Notification, User, UserRole
+from app.config import settings
+
 
 
 def create_notification(
@@ -43,6 +45,20 @@ def notify_by_role(
     for user in users:
         notif = create_notification(db, user.id, title, message)
         notifications.append(notif)
+    
+    # Twilio side‑effect (optional)
+    if settings.TWILIO_TEST_MODE:
+        from .twilio_service import send_whatsapp
+        role_to_test = {
+            "PHARMACY": settings.TEST_PHARMACY_WHATSAPP,
+            "DISTRIBUTOR": settings.TEST_DISTRIBUTOR_WHATSAPP,
+            "MANUFACTURER": settings.TEST_MANUFACTURER_WHATSAPP,
+            "DISPOSAL_FACILITY": settings.TEST_DISPOSAL_WHATSAPP,
+        }
+        for role in roles:
+            to_number = role_to_test.get(role)
+            if to_number:
+                send_whatsapp(to_number, f"{title}: {message}")
     return notifications
 
 

@@ -149,6 +149,8 @@ class ReturnRequest(Base):
     declared_quantity = Column(Integer, nullable=False)
     distributor_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     status = Column(String(50), nullable=False, default="PENDING")
+    evidence_id = Column(String(100), nullable=True)
+    evidence_url = Column(String(255), nullable=True)
 
     batch = relationship("Batch", back_populates="return_requests")
     distributor = relationship("User")
@@ -366,6 +368,8 @@ class ReturnRequestCreate(BaseModel):
     batch_id: int = Field(..., gt=0, description="ID of the batch being returned")
     declared_quantity: int = Field(..., gt=0, description="Declared quantity to return (must be > 0)")
     distributor_id: int = Field(..., gt=0, description="ID of the designated distributor")
+    evidence_id: Optional[str] = Field(None, description="ID of the uploaded photo evidence")
+    evidence_url: Optional[str] = Field(None, description="URL of the uploaded photo evidence")
 
 
 class ReturnRequestResponse(BaseModel):
@@ -374,6 +378,8 @@ class ReturnRequestResponse(BaseModel):
     declared_quantity: int
     distributor_id: int
     status: str
+    evidence_id: Optional[str] = None
+    evidence_url: Optional[str] = None
     batch: Optional[BatchResponse] = None
 
     model_config = {"from_attributes": True}

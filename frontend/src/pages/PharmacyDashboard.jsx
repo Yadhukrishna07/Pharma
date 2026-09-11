@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Pill, QrCode, ArrowUpRight, ShieldAlert, CheckCircle2, AlertTriangle, RefreshCw, Camera, Sparkles } from 'lucide-react';
-import { dashboardAPI, batchAPI, returnAPI } from '../services/api';
+import { Pill, QrCode, ArrowUpRight, ShieldAlert, CheckCircle2, AlertTriangle, RefreshCw, Camera, Sparkles, Trash2, RotateCcw, Upload } from 'lucide-react';
+import { dashboardAPI, batchAPI, returnAPI, evidenceAPI } from '../services/api';
 import StatusBadge from '../components/StatusBadge';
 import ProgressTracker from '../components/ProgressTracker';
 import BarcodeScanner from '../components/BarcodeScanner';
 import RecentActivityFeed from '../components/RecentActivityFeed';
 import ModeratorInsightCard from '../components/ModeratorInsightCard';
-import EvidenceCapture from '../components/EvidenceCapture';
 
 export default function PharmacyDashboard() {
   const [data, setData] = useState(null);
@@ -21,6 +20,156 @@ export default function PharmacyDashboard() {
   // Return request form
   const [returnQty, setReturnQty] = useState(100);
   const [distributorId, setDistributorId] = useState(3); // BlueDart
+
+  // Inline Photo Evidence state inside Return Request Card
+  const [evidenceData, setEvidenceData] = useState(null);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [evidenceError, setEvidenceError] = useState(null);
+  const [showCameraView, setShowCameraView] = useState(false);
+
+  const inlineVideoRef = useRef(null);
+  const inlineCanvasRef = useRef(null);
+  const inlineStreamRef = useRef(null);
+  const fileInputRef = useRef(null);
+
+  // Stop camera stream
+  const stopInlineCamera = () => {
+    if (inlineStreamRef.current) {
+      inlineStreamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch (e) {
+          console.warn('Error stopping inline camera track:', e);
+        }
+      });
+      inlineStreamRef.current = null;
+    }
+    setShowCameraView(false);
+  };
+
+  useEffect(() => {
+    return () => {
+      stopInlineCamera();
+    };
+  }, []);
+
+  const startInlineCamera = async () => {
+    setEvidenceError(null);
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setEvidenceError('Camera API is not supported in this browser environment.');
+      return;
+    }
+    try {
+      stopInlineCamera();
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } },
+        audio: false,
+      });
+      inlineStreamRef.current = stream;
+      setShowCameraView(true);
+      setTimeout(() => {
+        if (inlineVideoRef.current) {
+          inlineVideoRef.current.srcObject = stream;
+          inlineVideoRef.current.play().catch((err) => console.warn('Inline camera play error:', err));
+        }
+      }, 100);
+    } catch (err) {
+      console.error('Camera access error:', err);
+      setEvidenceError('Unable to access camera device. Please check permissions or upload photo.');
+      setShowCameraView(false);
+    }
+  };
+
+  const processAndUploadEvidence = async (fileOrBlob) => {
+    setEvidenceLoading(true);
+    setEvidenceError(null);
+    try {
+      let lat = 12.9716;
+      let lng = 77.5946;
+      try {
+        if (navigator.geolocation) {
+          const pos = await new Promise((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 2500 });
+          });
+          lat = pos.coords.latitude;
+          lng = pos.coords.longitude;
+        }
+      } catch (geoErr) {
+        console.warn('GPS location fallback used:', geoErr);
+      }
+
+      const formData = new FormData();
+      const batchNum = data?.batch?.batch_number || 'BATCH-001';
+      const filename = fileOrBlob.name || `return_evidence_${batchNum}_${Date.now()}.jpg`;
+      formData.append('file', fileOrBlob, filename);
+      formData.append('batch_number', batchNum);
+      formData.append('latitude', lat.toString());
+      formData.append('longitude', lng.toString());
+      formData.append('timestamp', new Date().toISOString());
+      formData.append('captured_by_role', 'Retailer');
+      formData.append('captured_by_name', data?.organization_name || 'MedPlus Central Indiranagar');
+
+      const res = await evidenceAPI.uploadEvidence(formData);
+      const previewUrl = fileOrBlob instanceof Blob ? URL.createObjectURL(fileOrBlob) : res.data.file_url;
+      setEvidenceData({
+        evidence_id: res.data.evidence_id || `EV-${Date.now()}`,
+        file_url: res.data.file_url,
+        previewUrl: previewUrl,
+        captured_at: new Date().toLocaleTimeString(),
+      });
+      stopInlineCamera();
+    } catch (err) {
+      console.error('Evidence upload error:', err);
+      setEvidenceError(err.response?.data?.detail || 'Failed to upload photo evidence.');
+    } finally {
+      setEvidenceLoading(false);
+    }
+  };
+
+  const captureInlineFrame = () => {
+    if (!inlineVideoRef.current || !inlineCanvasRef.current) return;
+    const video = inlineVideoRef.current;
+    const canvas = inlineCanvasRef.current;
+    const width = video.videoWidth || 1280;
+    const height = video.videoHeight || 720;
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, width, height);
+
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          setEvidenceError('Failed to capture frame from camera.');
+          return;
+        }
+        processAndUploadEvidence(blob);
+      },
+      'image/jpeg',
+      0.92
+    );
+  };
+
+  const handleFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      processAndUploadEvidence(file);
+    }
+  };
+
+  const removeEvidence = () => {
+    if (evidenceData?.previewUrl && evidenceData.previewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(evidenceData.previewUrl);
+    }
+    setEvidenceData(null);
+    setEvidenceError(null);
+    stopInlineCamera();
+  };
+
+  const retakeEvidence = () => {
+    removeEvidence();
+    startInlineCamera();
+  };
 
   useEffect(() => {
     fetchDashboard();
@@ -90,6 +239,15 @@ export default function PharmacyDashboard() {
   const handleTriggerReturn = async (e) => {
     e.preventDefault();
     if (!data?.batch) return;
+
+    if (!evidenceData) {
+      setActionMsg({
+        type: 'error',
+        text: 'Photo evidence is required before submitting the return request.',
+      });
+      return;
+    }
+
     setLoading(true);
     setActionMsg(null);
 
@@ -98,10 +256,12 @@ export default function PharmacyDashboard() {
         batch_id: Number(data.batch.id),
         declared_quantity: Number(returnQty),
         distributor_id: Number(distributorId),
+        evidence_id: evidenceData.evidence_id,
+        evidence_url: evidenceData.file_url,
       });
       setActionMsg({
         type: 'success',
-        text: `Reverse chain return created! Request ID: #${res.data.id}. BlueDart Logistics notified for pickup.`,
+        text: `Reverse chain return created! Request ID: #${res.data.id}. BlueDart Logistics notified for pickup. Photo evidence attached.`,
       });
       fetchDashboard(false);
     } catch (err) {
@@ -118,6 +278,7 @@ export default function PharmacyDashboard() {
     try {
       setLoading(true);
       await dashboardAPI.resetDashboard(mode);
+      removeEvidence();
       await fetchDashboard(false);
       setActionMsg({
         type: 'success',
@@ -385,34 +546,178 @@ export default function PharmacyDashboard() {
               </select>
             </div>
 
+            {/* Evidence Required Section */}
+            <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/80 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <Camera className="w-4 h-4 text-blue-800" />
+                  <span className="text-xs font-bold text-slate-900">Photo Evidence</span>
+                  <span className="text-[10px] font-extrabold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200 uppercase tracking-wider">
+                    Required
+                  </span>
+                </div>
+
+                {/* Evidence Status Indicator */}
+                {evidenceData ? (
+                  <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 text-[11px] font-bold px-2 py-0.5 rounded-full border border-emerald-300">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    Evidence captured ✓
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-800 text-[11px] font-semibold px-2 py-0.5 rounded-full border border-amber-300">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                    Missing
+                  </span>
+                )}
+              </div>
+
+              <p className="text-[11px] text-slate-600 leading-relaxed">
+                Capture a photo of the expired medicine package showing the physical product, batch ID, and expiry date.
+              </p>
+
+              {/* Hidden Canvas & File Input */}
+              <canvas ref={inlineCanvasRef} className="hidden" />
+              <input
+                type="file"
+                ref={fileInputRef}
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={handleFileUpload}
+              />
+
+              {/* Live Camera Stream View */}
+              {showCameraView && (
+                <div className="relative rounded-lg overflow-hidden bg-slate-950 border border-slate-800 space-y-2 p-2">
+                  <video
+                    ref={inlineVideoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full max-h-48 object-cover rounded bg-black"
+                  />
+                  <div className="flex items-center justify-center gap-2">
+                    <button
+                      type="button"
+                      onClick={captureInlineFrame}
+                      disabled={evidenceLoading}
+                      className="btn-primary text-xs py-1 px-3 bg-emerald-600 hover:bg-emerald-700 flex items-center gap-1 shrink-0"
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      {evidenceLoading ? 'Uploading...' : 'Take Photo'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={stopInlineCamera}
+                      className="btn-secondary text-xs py-1 px-3 text-slate-600 shrink-0"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Evidence Error Message */}
+              {evidenceError && (
+                <div className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-[11px] flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-rose-600" />
+                  <span>{evidenceError}</span>
+                </div>
+              )}
+
+              {/* Captured Image Preview */}
+              {evidenceData && !showCameraView && (
+                <div className="space-y-2.5 pt-1 border-t border-slate-200">
+                  <div className="relative group rounded-lg overflow-hidden border border-slate-300 bg-slate-900 flex items-center justify-center max-h-48">
+                    <img
+                      src={evidenceData.previewUrl || evidenceData.file_url}
+                      alt="Return Evidence Preview"
+                      className="w-full h-auto max-h-48 object-contain"
+                    />
+                    <div className="absolute bottom-2 left-2 bg-slate-950/80 text-white text-[10px] font-mono px-2 py-0.5 rounded backdrop-blur-sm">
+                      {evidenceData.evidence_id} • {evidenceData.captured_at}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs">
+                    <button
+                      type="button"
+                      onClick={retakeEvidence}
+                      disabled={evidenceLoading || currentStatus !== 'EXPIRED'}
+                      className="btn-secondary text-[11px] py-1 px-2.5 flex items-center gap-1 text-slate-700 hover:bg-slate-100"
+                    >
+                      <RotateCcw className="w-3 h-3 text-blue-700" />
+                      Retake Photo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={removeEvidence}
+                      disabled={evidenceLoading || currentStatus !== 'EXPIRED'}
+                      className="btn-secondary text-[11px] py-1 px-2.5 flex items-center gap-1 text-rose-700 border-rose-200 hover:bg-rose-50"
+                    >
+                      <Trash2 className="w-3 h-3 text-rose-600" />
+                      Remove Evidence
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Validation Warning & Capture Buttons when evidence is missing */}
+              {!evidenceData && !showCameraView && (
+                <div className="space-y-2">
+                  <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-[11px] flex items-center gap-2 font-medium">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>Photo evidence is required before submitting the return request.</span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={startInlineCamera}
+                      disabled={evidenceLoading || currentStatus !== 'EXPIRED'}
+                      className="btn-secondary w-full text-xs py-1.5 border-blue-300 text-blue-900 bg-blue-50/70 hover:bg-blue-100 flex items-center justify-center gap-1.5 font-semibold"
+                    >
+                      <Camera className="w-3.5 h-3.5 text-blue-800" />
+                      {evidenceLoading ? 'Opening Camera...' : '📷 Open Camera Capture'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={evidenceLoading || currentStatus !== 'EXPIRED'}
+                      className="btn-secondary text-xs py-1.5 px-3 text-slate-700 hover:bg-slate-100 shrink-0 flex items-center gap-1"
+                      title="Upload image file from device"
+                    >
+                      <Upload className="w-3.5 h-3.5 text-slate-600" />
+                      Upload
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <button
               type="submit"
-              disabled={loading || currentStatus !== 'EXPIRED'}
-              className="btn-primary w-full text-xs"
+              disabled={loading || currentStatus !== 'EXPIRED' || !evidenceData}
+              className="btn-primary w-full text-xs disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {loading
                 ? 'Submitting...'
-                : currentStatus === 'EXPIRED'
-                ? 'Submit Reverse Chain Return Request'
-                : `Return Request Already Submitted [${currentStatus}]`}
+                : currentStatus !== 'EXPIRED'
+                ? `Return Request Already Submitted [${currentStatus}]`
+                : !evidenceData
+                ? 'Photo Evidence Required to Submit Return'
+                : 'Submit Reverse Chain Return Request'}
             </button>
           </form>
         </div>
       </div>
 
-      {/* Evidence Capture & AI Moderator Row */}
+      {/* AI Moderator & Recent Activity Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <EvidenceCapture
-          batchNumber={batch?.batch_number || 'PCM-2026-00124'}
-          organizationName={data?.organization_name}
-        />
         <ModeratorInsightCard insight={data?.moderator_insight} />
-      </div>
-
-      {/* Recent Activity Feed */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <RecentActivityFeed events={data?.recent_activity} title="Recent Activity (BATCH-001)" />
       </div>
+
 
       {/* Critical Re-Entry Fraud Modal */}
       {fraudModal && (

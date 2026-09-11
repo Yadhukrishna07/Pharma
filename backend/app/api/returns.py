@@ -63,7 +63,14 @@ def create_return_request(
             detail=f"User with ID {req.distributor_id} ({distributor.organization_name}) is not a DISTRIBUTOR (role: {dist_role})",
         )
 
-    # 5. Check for existing active return request on this batch
+    # 5. Validate mandatory photo evidence
+    if not req.evidence_id and not req.evidence_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Photo evidence is required for return submission.",
+        )
+
+    # 6. Check for existing active return request on this batch
     existing_return = db.query(ReturnRequest).filter(
         ReturnRequest.batch_id == req.batch_id,
         ReturnRequest.status.in_(["PENDING", "PICKED_UP", "RECEIVED", "DISPUTED"]),
@@ -74,7 +81,7 @@ def create_return_request(
             detail=f"A return request (ID: {existing_return.id}, status: {existing_return.status}) already exists for batch {batch.batch_number}",
         )
 
-    # 6. Execute state transition
+    # 7. Execute state transition
     try:
         transition_state(
             db=db,
@@ -85,6 +92,8 @@ def create_return_request(
             event_data={
                 "declared_quantity": req.declared_quantity,
                 "distributor_id": req.distributor_id,
+                "evidence_id": req.evidence_id,
+                "evidence_url": req.evidence_url,
             },
             background_tasks=background_tasks,
         )
@@ -93,12 +102,14 @@ def create_return_request(
 
     batch.reverse_chain_flag = True
 
-    # 7. Persist return request
+    # 8. Persist return request
     return_request = ReturnRequest(
         batch_id=req.batch_id,
         declared_quantity=req.declared_quantity,
         distributor_id=req.distributor_id,
         status="PENDING",
+        evidence_id=req.evidence_id,
+        evidence_url=req.evidence_url,
     )
     db.add(return_request)
     db.commit()

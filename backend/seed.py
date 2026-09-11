@@ -208,6 +208,8 @@ def reset_batch_workflow(db, mode: str = "fresh"):
             declared_quantity=100,
             distributor_id=distributor.id,
             status="PICKED_UP",
+            evidence_id="EV-SEED-001",
+            evidence_url="/uploads/evidence/evidence_BATCH-001_demo.jpg",
         )
         db.add(ret)
         db.flush()

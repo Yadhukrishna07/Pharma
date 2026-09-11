@@ -67,12 +67,11 @@ export default function LandingPage({ onSelectRole }) {
           Enterprise Closed-Loop Compliance Platform
         </div>
         <h1 className="text-4xl sm:text-5xl font-extrabold text-slate-900 tracking-tight leading-tight">
-          Cryptographic Drug Return &<br />
-          <span className="text-blue-800">Verified Destruction Network</span>
+          Pharma Reverse Chain Compliance Platform <br />
+          <span className="text-blue-800">for Drug Disposal Mandate </span>
         </h1>
         <p className="max-w-2xl mx-auto text-base text-slate-600 leading-relaxed">
-          PharmMedian secures the reverse pharmaceutical supply chain with state-machine integrity,
-          SHA-256 cryptographic audit chaining, and autonomous Gemini AI compliance moderation.
+          PharmMedian secures the reverse pharmaceutical supply chain with state-machine integrity.
         </p>
       </div>
 
