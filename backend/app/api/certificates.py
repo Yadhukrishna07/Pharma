@@ -1,3 +1,4 @@
+import logging
 import datetime
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
@@ -9,8 +10,12 @@ from app.models.schemas import (
     CertificateCreateRequest, CertificateResponse,
 )
 from app.services.workflow_service import transition_state
+from app.services.telegram_service import notify_disposal_closure_completed
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/certificates", tags=["Certificates"])
+
 
 
 @router.post("", response_model=CertificateResponse)
@@ -146,8 +151,26 @@ def verify_certificate(
     batch.current_location = "Closed — Regulatory Verified"
     db.commit()
 
+    # Telegram notification for Disposal & Batch Closure Verified (Event 6B)
+    try:
+        med_name = batch.medicine.name if batch.medicine else "Unknown Medicine"
+        facility_user = db.query(User).filter(User.id == cert.facility_id).first()
+        facility_name = facility_user.organization_name if facility_user else "Disposal Facility"
+        verifier_name = current_user.organization_name or "CDSCO Regulator"
+        notify_disposal_closure_completed(
+            medicine_name=med_name,
+            batch_number=batch.batch_number,
+            quantity=cert.quantity,
+            certificate_number=cert.certificate_number,
+            verifier_org=verifier_name,
+            facility_org=facility_name,
+        )
+    except Exception as exc:
+        logger.error("Failed to trigger disposal closure notification: %s", exc)
+
     return {
         "status": "verified",
         "message": "Certificate verified. Batch lifecycle closed.",
         "batch_status": BatchStatus.CLOSED.value,
     }
+

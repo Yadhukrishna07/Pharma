@@ -9,7 +9,7 @@ from app.database import engine, Base, get_db
 from app.models.schemas import User
 import os
 from fastapi.staticfiles import StaticFiles
-from app.api import auth, batches, returns, disputes, destruction, certificates, audit, dashboard, evidence
+from app.api import auth, batches, returns, disputes, destruction, certificates, audit, dashboard, evidence, telegram
 
 
 @asynccontextmanager
@@ -51,6 +51,7 @@ app.include_router(certificates.router)
 app.include_router(audit.router)
 app.include_router(dashboard.router)
 app.include_router(evidence.router)
+app.include_router(telegram.router)
 
 
 @app.get("/notifications")
