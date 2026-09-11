@@ -90,4 +90,13 @@ export const dashboardAPI = {
   resetDashboard: (mode = 'fresh') => api.post('/dashboard/reset', { mode }),
 };
 
+export const evidenceAPI = {
+  uploadEvidence: (formData) =>
+    api.post('/evidence/upload', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    }),
+};
+
 export default api;

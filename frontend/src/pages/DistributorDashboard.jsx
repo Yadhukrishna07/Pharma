@@ -5,6 +5,7 @@ import StatusBadge from '../components/StatusBadge';
 import ProgressTracker from '../components/ProgressTracker';
 import RecentActivityFeed from '../components/RecentActivityFeed';
 import ModeratorInsightCard from '../components/ModeratorInsightCard';
+import EvidenceCapture from '../components/EvidenceCapture';
 
 export default function DistributorDashboard() {
   const [data, setData] = useState(null);
@@ -353,9 +354,21 @@ export default function DistributorDashboard() {
         </div>
       </div>
 
-      {/* Grid: Moderator AI & Live Recent Activity Feed */}
+      {/* Photo Evidence Capture & AI Moderator Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <EvidenceCapture
+          role="Distributor"
+          batchNumber={batch?.batch_number || 'BATCH-001'}
+          shipmentId={data?.incoming_return ? `SHIP-RET-${data.incoming_return.id}` : 'SHIP-2026-0042'}
+          organizationName={data?.organization_name || 'BlueDart Pharma Logistics'}
+          title="Photo Evidence"
+          description="Capture real photograph showing pharmaceutical shipment being received, stored, transferred, or dispatched."
+        />
         <ModeratorInsightCard insight={data?.moderator_insight} />
+      </div>
+
+      {/* Live Recent Activity Feed */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <RecentActivityFeed events={data?.recent_activity} title="Recent Activity (BATCH-001)" />
       </div>
     </div>

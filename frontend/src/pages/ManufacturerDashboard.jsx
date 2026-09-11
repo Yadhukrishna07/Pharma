@@ -5,6 +5,7 @@ import StatusBadge from '../components/StatusBadge';
 import ProgressTracker from '../components/ProgressTracker';
 import RecentActivityFeed from '../components/RecentActivityFeed';
 import ModeratorInsightCard from '../components/ModeratorInsightCard';
+import EvidenceCapture from '../components/EvidenceCapture';
 
 export default function ManufacturerDashboard() {
   const [data, setData] = useState(null);
@@ -228,9 +229,23 @@ export default function ManufacturerDashboard() {
         </div>
       )}
 
-      {/* Grid: AI Moderator Card & Recent Activity Feed */}
+      {/* Manufacturer Photo Evidence Capture & AI Moderator Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <EvidenceCapture
+          role="Manufacturer"
+          batchNumber={batch?.batch_number || 'BATCH-001'}
+          productionId="PROD-2026-088"
+          productName={batch?.medicine_name || 'Augmentin Duo 625mg'}
+          stageName="Quality Inspection & Quarantine"
+          organizationName={data?.organization_name || 'Sun Pharma Laboratories'}
+          title="Photo Evidence"
+          description="Capture real photograph of pharmaceutical products, manufacturing/packaging process, lot info, or quality inspection."
+        />
         <ModeratorInsightCard insight={data?.moderator_insight} />
+      </div>
+
+      {/* Grid: Recent Activity Feed */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <RecentActivityFeed events={data?.recent_activity} title="Recent Activity (BATCH-001)" />
       </div>
     </div>

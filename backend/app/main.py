@@ -7,7 +7,9 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_user, require_roles
 from app.database import engine, Base, get_db
 from app.models.schemas import User
-from app.api import auth, batches, returns, disputes, destruction, certificates, audit, dashboard
+import os
+from fastapi.staticfiles import StaticFiles
+from app.api import auth, batches, returns, disputes, destruction, certificates, audit, dashboard, evidence
 
 
 @asynccontextmanager
@@ -33,6 +35,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Static files for evidence uploads
+upload_dir = os.path.join(os.getcwd(), "uploads")
+os.makedirs(upload_dir, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=upload_dir), name="uploads")
+
 # Register routers
 app.include_router(auth.router)
 app.include_router(batches.router)
@@ -43,6 +50,7 @@ app.include_router(destruction.mfg_router)
 app.include_router(certificates.router)
 app.include_router(audit.router)
 app.include_router(dashboard.router)
+app.include_router(evidence.router)
 
 
 @app.get("/notifications")

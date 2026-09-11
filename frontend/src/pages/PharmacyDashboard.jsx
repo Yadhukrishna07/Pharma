@@ -6,6 +6,7 @@ import ProgressTracker from '../components/ProgressTracker';
 import BarcodeScanner from '../components/BarcodeScanner';
 import RecentActivityFeed from '../components/RecentActivityFeed';
 import ModeratorInsightCard from '../components/ModeratorInsightCard';
+import EvidenceCapture from '../components/EvidenceCapture';
 
 export default function PharmacyDashboard() {
   const [data, setData] = useState(null);
@@ -399,9 +400,17 @@ export default function PharmacyDashboard() {
         </div>
       </div>
 
-      {/* Grid: AI Moderator Card & Recent Activity Feed */}
+      {/* Evidence Capture & AI Moderator Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <EvidenceCapture
+          batchNumber={batch?.batch_number || 'PCM-2026-00124'}
+          organizationName={data?.organization_name}
+        />
         <ModeratorInsightCard insight={data?.moderator_insight} />
+      </div>
+
+      {/* Recent Activity Feed */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <RecentActivityFeed events={data?.recent_activity} title="Recent Activity (BATCH-001)" />
       </div>
 

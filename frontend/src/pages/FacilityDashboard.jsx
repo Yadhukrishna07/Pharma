@@ -5,6 +5,7 @@ import StatusBadge from '../components/StatusBadge';
 import ProgressTracker from '../components/ProgressTracker';
 import RecentActivityFeed from '../components/RecentActivityFeed';
 import ModeratorInsightCard from '../components/ModeratorInsightCard';
+import EvidenceCapture from '../components/EvidenceCapture';
 
 export default function FacilityDashboard() {
   const [data, setData] = useState(null);
@@ -324,9 +325,23 @@ export default function FacilityDashboard() {
         </div>
       </div>
 
-      {/* Grid: AI Moderator & Recent Activity Feed */}
+      {/* Waste Facility Photo Evidence Capture & AI Moderator Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <EvidenceCapture
+          role="Waste Facility"
+          batchNumber={batch?.batch_number || 'BATCH-001'}
+          certificateId={certificate?.certificate_number || certNumInput}
+          productName={batch?.medicine_name || 'Augmentin Duo 625mg'}
+          stageName="Incineration Chamber Feed"
+          organizationName={data?.organization_name || 'BioClean Biomedical Waste Facility'}
+          title="Photo Evidence"
+          description="Capture real photographic evidence of waste intake, high-temperature incineration chamber feed, destruction residue, or certificate issuance."
+        />
         <ModeratorInsightCard insight={data?.moderator_insight} />
+      </div>
+
+      {/* Grid: Live Recent Activity Feed */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <RecentActivityFeed events={data?.recent_activity} title="Recent Activity (BATCH-001)" />
       </div>
     </div>
