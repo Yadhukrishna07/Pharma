@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Pill, Shield, Bell, ChevronDown, LogOut, User, Building2 } from 'lucide-react';
+import { Pill, Shield, Bell, ChevronDown, LogOut, User, Building2, Sparkles } from 'lucide-react';
 import { authAPI } from '../services/api';
 
 const ROLES = [
@@ -41,8 +41,8 @@ export default function Navbar({ currentUser, onRoleSwitch, onLogout }) {
     <nav className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16">
-          {/* Brand */}
-          <div className="flex items-center gap-3">
+          {/* Brand & Links */}
+          <div className="flex items-center gap-6">
             <Link to="/" className="flex items-center gap-2.5 group">
               <div className="w-10 h-10 rounded-xl bg-blue-800 flex items-center justify-center text-white shadow-sm group-hover:bg-blue-900 transition-colors">
                 <Pill className="w-6 h-6" />
@@ -56,6 +56,16 @@ export default function Navbar({ currentUser, onRoleSwitch, onLogout }) {
                 </span>
               </div>
             </Link>
+
+            {currentUser && (
+              <Link
+                to="/redistribution"
+                className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-800 text-xs font-bold border border-blue-200 hover:bg-blue-100 transition-colors"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-blue-700" />
+                <span>AI Smart Redistribution</span>
+              </Link>
+            )}
           </div>
 
           {/* User & Role Switcher */}

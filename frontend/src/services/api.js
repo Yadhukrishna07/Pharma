@@ -99,4 +99,9 @@ export const evidenceAPI = {
     }),
 };
 
+export const reallocationAPI = {
+  getRecommendations: () => api.get('/reallocation/recommendations'),
+  getRawData: () => api.get('/reallocation/raw-data'),
+};
+
 export default api;

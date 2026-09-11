@@ -9,7 +9,6 @@ from app.database import engine, Base, get_db
 from app.models.schemas import User
 import os
 from fastapi.staticfiles import StaticFiles
-from app.api import auth, batches, returns, disputes, destruction, certificates, audit, dashboard, evidence, chatbot
 
 
 @asynccontextmanager
@@ -41,10 +40,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Static files for evidence uploads
-upload_dir = os.path.join(os.getcwd(), "uploads")
-os.makedirs(upload_dir, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=upload_dir), name="uploads")
+# Static files for evidence uploads — disabled on Vercel (read-only filesystem)
+# TODO: switch to cloud storage (Vercel Blob / S3 / Supabase) for uploads in production
+if os.environ.get("VERCEL") != "1":
+    upload_dir = os.path.join(os.getcwd(), "uploads")
+    os.makedirs(upload_dir, exist_ok=True)
+    app.mount("/uploads", StaticFiles(directory=upload_dir), name="uploads")
+from app.api import auth, batches, returns, disputes, destruction, certificates, audit, dashboard, evidence, chatbot, reallocation
 
 # Register routers
 app.include_router(auth.router)
@@ -58,6 +60,7 @@ app.include_router(audit.router)
 app.include_router(dashboard.router)
 app.include_router(evidence.router)
 app.include_router(chatbot.router)
+app.include_router(reallocation.router)
 
 
 @app.get("/notifications")

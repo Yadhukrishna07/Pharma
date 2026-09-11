@@ -8,6 +8,7 @@ import DistributorDashboard from './pages/DistributorDashboard';
 import ManufacturerDashboard from './pages/ManufacturerDashboard';
 import FacilityDashboard from './pages/FacilityDashboard';
 import RegulatorDashboard from './pages/RegulatorDashboard';
+import RedistributionDashboard from './pages/RedistributionDashboard';
 import { authAPI } from './services/api';
 
 export default function App() {
@@ -113,6 +114,14 @@ export default function App() {
             element={
               <ProtectedRoute currentUser={currentUser} allowedRoles={['REGULATOR']}>
                 <RegulatorDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/redistribution"
+            element={
+              <ProtectedRoute currentUser={currentUser} allowedRoles={['PHARMACY', 'DISTRIBUTOR', 'MANUFACTURER', 'REGULATOR']}>
+                <RedistributionDashboard />
               </ProtectedRoute>
             }
           />
