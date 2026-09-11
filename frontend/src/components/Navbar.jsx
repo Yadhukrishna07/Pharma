@@ -50,9 +50,6 @@ export default function Navbar({ currentUser, onRoleSwitch, onLogout }) {
               <div>
                 <span className="font-extrabold text-lg text-slate-900 tracking-tight flex items-center gap-1.5">
                   PharmMedian
-                  <span className="bg-blue-50 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-blue-200">
-                    CLOSED LOOP
-                  </span>
                 </span>
                 <span className="text-[10px] text-slate-500 block font-medium -mt-1">
                   Drug Return & Destruction Chain

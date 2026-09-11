@@ -10,22 +10,7 @@ const RISK_BADGES = {
 
 export default function ModeratorInsightCard({ insight, defaultRole = 'COMPLIANCE' }) {
   if (!insight) {
-    return (
-      <div className="bg-gradient-to-r from-slate-900 to-slate-800 text-white rounded-2xl p-5 shadow-sm border border-slate-700">
-        <div className="flex items-center justify-between border-b border-slate-700 pb-3 mb-3">
-          <div className="flex items-center gap-2">
-            <Bot className="w-4 h-4 text-blue-400" />
-            <span className="text-xs font-mono font-bold uppercase tracking-wider text-blue-300">
-              MODERATOR AI
-            </span>
-          </div>
-          <span className="text-[10px] font-mono text-slate-400">STANDBY</span>
-        </div>
-        <p className="text-xs text-slate-300 italic">
-          Awaiting lifecycle transition to execute automated risk and compliance analysis.
-        </p>
-      </div>
-    );
+    return null;
   }
 
   const riskClass = RISK_BADGES[insight.risk_level] || 'bg-blue-600 text-white';

@@ -1,9 +1,36 @@
 """
 Deterministic risk engine for fallback when AI is unavailable.
 Provides rule-based risk assessment based on event type and data.
+
+IMPORTANT: The "event_type" field returned here MUST use the same normalized
+vocabulary the AI moderator is instructed to use (see prompts.SYSTEM_PROMPT):
+EXPIRY | RETURN | DISCREPANCY | DELAY | REENTRY | DESTRUCTION | OTHER.
+Internal workflow event names (e.g. "REENTRY_FRAUD_SCAN") are mapped to that
+vocabulary via _NORMALIZED_EVENT_TYPE below, so downstream consumers of
+ModeratorEvent see one consistent contract regardless of which code path
+(AI vs. fallback) produced the row.
 """
 
 from typing import List
+
+# Internal workflow event name -> normalized category used in ModeratorAnalysis.event_type
+_NORMALIZED_EVENT_TYPE = {
+    "REENTRY_FRAUD_SCAN": "REENTRY",
+    "DISCREPANCY_DETECTED": "DISCREPANCY",
+    "RETURN_REQUESTED": "RETURN",
+    "RETURN_REQUEST": "RETURN",
+    "DESTRUCTION_RECORDED": "DESTRUCTION",
+    "CERTIFICATE_GENERATED": "DESTRUCTION",
+    "PICKUP_CONFIRMED": "OTHER",
+    "PICKUP": "OTHER",
+    "EXPIRY_FLAGGED": "EXPIRY",
+    "EXPIRY_DETECTED": "EXPIRY",
+    "PROCESSING_DELAYED": "DELAY",
+}
+
+
+def _normalize(event_type: str) -> str:
+    return _NORMALIZED_EVENT_TYPE.get(event_type, "OTHER")
 
 
 def calculate_risk(
@@ -40,15 +67,12 @@ def calculate_risk(
         recipients = ["PHARMACY", "DISTRIBUTOR", "MANUFACTURER", "FACILITY", "REGULATOR"]
 
     elif event_type == "DISCREPANCY_DETECTED":
-        declared = event_data.get("declared_qty", 0)
-        received = event_data.get("received_qty", 0)
+        declared = event_data.get("declared_qty", 0) or 0
+        received = event_data.get("received_qty", 0) or 0
         diff = abs(declared - received)
         pct = (diff / declared * 100) if declared > 0 else 0
 
-        if pct > 10:
-            risk_level = "HIGH"
-        else:
-            risk_level = "MEDIUM"
+        risk_level = "HIGH" if pct > 10 else "MEDIUM"
 
         analysis = (
             f"Quantity discrepancy detected: declared {declared}, received {received} "
@@ -92,6 +116,23 @@ def calculate_risk(
         message = "Batch pickup has been confirmed by the logistics partner."
         recipients = ["PHARMACY", "DISTRIBUTOR"]
 
+    elif event_type in ("EXPIRY_FLAGGED", "EXPIRY_DETECTED"):
+        risk_level = "MEDIUM"
+        analysis = (
+            "Batch flagged as expired or nearing expiry. Requires removal from "
+            "active inventory and initiation of the return/destruction workflow."
+        )
+        recommended_action = "Initiate return request; verify batch is quarantined from active stock."
+        message = "A batch has been flagged for expiry and requires processing."
+        recipients = ["PHARMACY", "DISTRIBUTOR"]
+
+    elif event_type == "PROCESSING_DELAYED":
+        risk_level = "MEDIUM"
+        analysis = "Workflow step has exceeded expected processing time."
+        recommended_action = "Follow up with the responsible party to confirm status and unblock the batch."
+        message = "This batch's processing has been delayed beyond the expected timeframe."
+        recipients = ["PHARMACY", "DISTRIBUTOR", "MANUFACTURER"]
+
     else:
         risk_level = "LOW"
         analysis = f"Routine workflow event: {event_type}."
@@ -101,7 +142,7 @@ def calculate_risk(
 
     return {
         "risk_level": risk_level,
-        "event_type": event_type,
+        "event_type": _normalize(event_type),
         "analysis": analysis,
         "recommended_action": recommended_action,
         "message": message,

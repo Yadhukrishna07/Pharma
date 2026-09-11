@@ -9,7 +9,11 @@ from app.database import engine, Base, get_db
 from app.models.schemas import User
 import os
 from fastapi.staticfiles import StaticFiles
+<<<<<<< HEAD
 from app.api import auth, batches, returns, disputes, destruction, certificates, audit, dashboard, evidence, telegram
+=======
+from app.api import auth, batches, returns, disputes, destruction, certificates, audit, dashboard, evidence, chatbot
+>>>>>>> e421aa6f7b357a3a04815a243142223a10f999ea
 
 
 @asynccontextmanager
@@ -29,7 +33,13 @@ app = FastAPI(
 # CORS — allow frontend dev server
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "http://localhost:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -51,7 +61,11 @@ app.include_router(certificates.router)
 app.include_router(audit.router)
 app.include_router(dashboard.router)
 app.include_router(evidence.router)
+<<<<<<< HEAD
 app.include_router(telegram.router)
+=======
+app.include_router(chatbot.router)
+>>>>>>> e421aa6f7b357a3a04815a243142223a10f999ea
 
 
 @app.get("/notifications")

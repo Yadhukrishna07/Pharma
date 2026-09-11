@@ -1,5 +1,6 @@
 import React from 'react';
 import Navbar from './Navbar';
+import ChatWidget from './ChatWidget';
 
 export default function AppLayout({ currentUser, onRoleSwitch, onLogout, children }) {
   return (
@@ -16,6 +17,8 @@ export default function AppLayout({ currentUser, onRoleSwitch, onLogout, childre
           </span>
         </div>
       </footer>
+      {currentUser && <ChatWidget />}
     </div>
   );
 }
+

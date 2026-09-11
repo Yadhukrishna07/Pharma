@@ -5,8 +5,11 @@ Includes idempotency checks and fallback to deterministic risk engine.
 """
 
 import json
-import traceback
+import logging
+import time
 from typing import Optional
+
+from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.database import SessionLocal
@@ -16,6 +19,16 @@ from app.models.schemas import (
 from app.moderator.prompts import SYSTEM_PROMPT, build_event_prompt
 from app.moderator.risk_engine import calculate_risk
 from app.services.notification_service import notify_by_role
+
+logger = logging.getLogger("moderator")
+
+# Roles a notification is ever allowed to go to. Anything the AI returns
+# outside this set is dropped rather than passed to notify_by_role — the
+# model's output should never be able to widen its own blast radius.
+_VALID_ROLES = {"PHARMACY", "DISTRIBUTOR", "MANUFACTURER", "FACILITY", "REGULATOR"}
+
+_GEMINI_TIMEOUT_SECONDS = 20
+_GEMINI_MAX_ATTEMPTS = 2  # 1 retry on transient failure, then fall back
 
 
 def run_moderator_analysis(
@@ -33,7 +46,9 @@ def run_moderator_analysis(
     """
     db = SessionLocal()
     try:
-        # ── Idempotency check ──
+        # ── Idempotency check (best-effort; DB unique constraint on
+        # workflow_event_id is the real guarantee — see IntegrityError
+        # handling below for the race-safe fallback) ──
         existing = (
             db.query(ModeratorEvent)
             .filter(ModeratorEvent.workflow_event_id == workflow_event_id)
@@ -45,21 +60,30 @@ def run_moderator_analysis(
         # ── Gather context ──
         batch = db.query(Batch).filter(Batch.id == batch_id).first()
         if not batch:
+            logger.warning("Batch %s not found for workflow_event %s", batch_id, workflow_event_id)
             return
 
         actor = db.query(User).filter(User.id == actor_id).first()
         actor_role = actor.role.value if actor else "UNKNOWN"
 
-        # Build lifecycle history
+        # Build lifecycle history in one pass, batching the actor lookups
+        # (previously one query per event — N+1) into a single IN query.
         events = (
             db.query(WorkflowEvent)
             .filter(WorkflowEvent.batch_id == batch_id)
             .order_by(WorkflowEvent.created_at.asc())
             .all()
         )
+
+        actor_ids = {e.actor_id for e in events if e.actor_id is not None}
+        actors_by_id = {
+            u.id: u for u in db.query(User).filter(User.id.in_(actor_ids)).all()
+        } if actor_ids else {}
+
         batch_history = []
+        wf_event = None
         for e in events:
-            evt_actor = db.query(User).filter(User.id == e.actor_id).first()
+            evt_actor = actors_by_id.get(e.actor_id)
             batch_history.append({
                 "timestamp": str(e.created_at),
                 "event_type": e.event_type,
@@ -68,9 +92,14 @@ def run_moderator_analysis(
                 "actor_role": evt_actor.role.value if evt_actor else "UNKNOWN",
                 "data": e.data,
             })
+            if e.id == workflow_event_id:
+                wf_event = e
 
-        # Get event data from the workflow event
-        wf_event = db.query(WorkflowEvent).filter(WorkflowEvent.id == workflow_event_id).first()
+        # Fall back to a direct lookup only if the target event wasn't in
+        # this batch's history for some reason (shouldn't normally happen).
+        if wf_event is None:
+            wf_event = db.query(WorkflowEvent).filter(WorkflowEvent.id == workflow_event_id).first()
+
         event_data = {}
         if wf_event and wf_event.data:
             try:
@@ -100,6 +129,8 @@ def run_moderator_analysis(
                 batch_history=batch_history,
             )
 
+        recipients = _sanitize_recipients(analysis_result.get("recipients", []))
+
         # ── Store moderator event ──
         moderator_event = ModeratorEvent(
             workflow_event_id=workflow_event_id,
@@ -111,8 +142,21 @@ def run_moderator_analysis(
         )
         db.add(moderator_event)
 
-        # ── Send notifications ──
-        recipients = analysis_result.get("recipients", [])
+        try:
+            db.commit()
+        except IntegrityError:
+            # Another worker processed this workflow_event_id between our
+            # SELECT and this INSERT (requires a unique constraint on
+            # workflow_event_id at the DB level). Safe to no-op.
+            db.rollback()
+            logger.info(
+                "workflow_event %s already processed concurrently; skipping",
+                workflow_event_id,
+            )
+            return
+
+        # ── Send notifications (after commit succeeds, so we never notify
+        # for a moderator event that didn't actually get persisted) ──
         if recipients:
             notify_by_role(
                 db=db,
@@ -121,10 +165,12 @@ def run_moderator_analysis(
                 message=analysis_result.get("message", ""),
             )
 
-        db.commit()
-
     except Exception as e:
         db.rollback()
+        logger.exception(
+            "Moderator analysis failed for workflow_event %s (batch %s)",
+            workflow_event_id, batch_id,
+        )
         # Insert a deterministic fallback so business workflows are never blocked
         try:
             fallback_event = ModeratorEvent(
@@ -137,10 +183,21 @@ def run_moderator_analysis(
             )
             db.add(fallback_event)
             db.commit()
+        except IntegrityError:
+            db.rollback()  # already recorded concurrently — fine
         except Exception:
             db.rollback()
+            logger.exception("Failed to record fallback moderator event as well")
     finally:
         db.close()
+
+
+def _sanitize_recipients(recipients) -> list:
+    """Drop anything the AI (or fallback) returned that isn't a known role,
+    so a hallucinated or injected role string can never reach notify_by_role."""
+    if not isinstance(recipients, list):
+        return []
+    return [r for r in recipients if r in _VALID_ROLES]
 
 
 def _call_gemini(
@@ -153,58 +210,67 @@ def _call_gemini(
 ) -> Optional[dict]:
     """
     Call the Google Gemini API using the google-genai SDK.
-    Returns parsed JSON dict or None on failure.
+    Retries once on transient failure, then returns None so the caller
+    falls back to the deterministic risk engine.
     """
     if not settings.GEMINI_API_KEY:
         return None
 
-    try:
-        from google import genai
-        from google.genai import types
+    from google import genai
+    from google.genai import types
 
-        client = genai.Client(api_key=settings.GEMINI_API_KEY)
+    client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
-        prompt = build_event_prompt(
-            event_type=event_type,
-            batch_number=batch_number,
-            current_status=current_status,
-            actor_role=actor_role,
-            batch_history=batch_history,
-            event_data=event_data,
-        )
+    prompt = build_event_prompt(
+        event_type=event_type,
+        batch_number=batch_number,
+        current_status=current_status,
+        actor_role=actor_role,
+        batch_history=batch_history,
+        event_data=event_data,
+    )
 
-        config = types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            temperature=0.2,
-            response_mime_type="application/json",
-            response_schema=ModeratorAnalysis,
-        )
+    config = types.GenerateContentConfig(
+        system_instruction=SYSTEM_PROMPT,
+        temperature=0.2,
+        response_mime_type="application/json",
+        response_schema=ModeratorAnalysis,
+        http_options=types.HttpOptions(timeout=_GEMINI_TIMEOUT_SECONDS * 1000),
+    )
 
-        response = client.models.generate_content(
-            model=settings.GEMINI_MODEL,
-            contents=prompt,
-            config=config,
-        )
+    last_error: Optional[Exception] = None
+    for attempt in range(1, _GEMINI_MAX_ATTEMPTS + 1):
+        try:
+            response = client.models.generate_content(
+                model=settings.GEMINI_MODEL,
+                contents=prompt,
+                config=config,
+            )
 
-        if not response or not response.text:
-            return None
+            if not response or not response.text:
+                logger.warning("Gemini returned empty response (attempt %d)", attempt)
+                last_error = ValueError("empty response")
+                continue
 
-        # Extract text from response
-        text = response.text.strip()
-        # Clean markdown code blocks if present
-        if text.startswith("```"):
-            lines = text.split("\n")
-            lines = [l for l in lines if not l.strip().startswith("```")]
-            text = "\n".join(lines)
+            text = response.text.strip()
+            if text.startswith("```"):
+                lines = [l for l in text.split("\n") if not l.strip().startswith("```")]
+                text = "\n".join(lines)
 
-        result = json.loads(text)
+            result = json.loads(text)
+            validated = ModeratorAnalysis(**result)
 
-        # Validate with Pydantic
-        validated = ModeratorAnalysis(**result)
-        return validated.model_dump()
+            recipients = _sanitize_recipients(validated.recipients if hasattr(validated, "recipients") else [])
+            dumped = validated.model_dump()
+            dumped["recipients"] = recipients
+            return dumped
 
-    except Exception as e:
-        print(f"Gemini API error: {e}")
-        traceback.print_exc()
-        return None
+        except Exception as e:
+            last_error = e
+            logger.warning("Gemini API error on attempt %d/%d: %s", attempt, _GEMINI_MAX_ATTEMPTS, e)
+            if attempt < _GEMINI_MAX_ATTEMPTS:
+                time.sleep(0.5 * attempt)  # small backoff before retrying
+                continue
 
+    logger.error("Gemini API failed after %d attempt(s): %s", _GEMINI_MAX_ATTEMPTS, last_error)
+    return None
