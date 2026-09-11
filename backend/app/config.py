@@ -23,4 +23,8 @@ class Settings:
     TEST_MANUFACTURER_WHATSAPP: str | None = os.getenv("TEST_MANUFACTURER_WHATSAPP")
     TEST_DISPOSAL_WHATSAPP: str | None = os.getenv("TEST_DISPOSAL_WHATSAPP")
 
+    # Telegram configuration
+    TELEGRAM_BOT_TOKEN: str | None = os.getenv("TELEGRAM_BOT_TOKEN")
+    TELEGRAM_CHAT_ID: str | None = os.getenv("TELEGRAM_CHAT_ID")
+
 settings = Settings()

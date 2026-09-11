@@ -1,3 +1,6 @@
+import logging
+from typing import Optional
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 
@@ -10,8 +13,18 @@ from app.models.schemas import (
     HandoffResponse,
 )
 from app.services.workflow_service import transition_state, handle_discrepancy
+from app.services.telegram_service import (
+    notify_return_created,
+    notify_return_approved,
+    notify_return_rejected,
+    notify_pickup_completed,
+    notify_return_received,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/returns", tags=["Returns"])
+
 
 
 @router.post("/", response_model=ReturnRequestResponse)
@@ -115,7 +128,26 @@ def create_return_request(
     db.commit()
     db.refresh(return_request)
 
+    # Telegram notification for Return Created (Event 2)
+    try:
+        med_name = batch.medicine.name if batch.medicine else "Unknown Medicine"
+        pharmacy_name = current_user.organization_name or "Pharmacy"
+        distributor_name = distributor.organization_name if distributor else "Distributor"
+        status_val = batch.current_status.value if hasattr(batch.current_status, "value") else str(batch.current_status)
+        notify_return_created(
+            medicine_name=med_name,
+            batch_number=batch.batch_number,
+            quantity=return_request.declared_quantity,
+            current_status=status_val,
+            pharmacy_org=pharmacy_name,
+            distributor_org=distributor_name,
+            return_id=return_request.id,
+        )
+    except Exception as exc:
+        logger.error("Failed to trigger return creation notification: %s", exc)
+
     return ReturnRequestResponse.model_validate(return_request)
+
 
 
 @router.get("/", response_model=list[ReturnRequestResponse])
@@ -126,6 +158,90 @@ def list_returns(
     """List all return requests. PHARMACY, DISTRIBUTOR, REGULATOR only."""
     returns = db.query(ReturnRequest).all()
     return [ReturnRequestResponse.model_validate(r) for r in returns]
+
+
+class ReturnRejectRequest(BaseModel):
+    reason: Optional[str] = "Quality inspection criteria not satisfied"
+
+
+@router.post("/{return_id}/approve")
+def approve_return_request(
+    return_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("DISTRIBUTOR")),
+):
+    """Distributor approves a return request. DISTRIBUTOR only."""
+    ret = db.query(ReturnRequest).filter(ReturnRequest.id == return_id).first()
+    if not ret:
+        raise HTTPException(status_code=404, detail="Return request not found")
+
+    batch = db.query(Batch).filter(Batch.id == ret.batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    ret.status = "APPROVED"
+    db.commit()
+    db.refresh(ret)
+
+    # Telegram notification for Return Approved (Event 3)
+    try:
+        med_name = batch.medicine.name if batch.medicine else "Unknown Medicine"
+        distributor_name = current_user.organization_name
+        pharmacy_name = batch.current_location or "Pharmacy"
+        notify_return_approved(
+            medicine_name=med_name,
+            batch_number=batch.batch_number,
+            quantity=ret.declared_quantity,
+            distributor_org=distributor_name,
+            pharmacy_org=pharmacy_name,
+            return_id=ret.id,
+        )
+    except Exception as exc:
+        logger.error("Failed to trigger return approval notification: %s", exc)
+
+    return {"status": "ok", "message": "Return request approved", "return_status": ret.status}
+
+
+@router.post("/{return_id}/reject")
+def reject_return_request(
+    return_id: int,
+    req: Optional[ReturnRejectRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("DISTRIBUTOR")),
+):
+    """Distributor rejects a return request. DISTRIBUTOR only."""
+    ret = db.query(ReturnRequest).filter(ReturnRequest.id == return_id).first()
+    if not ret:
+        raise HTTPException(status_code=404, detail="Return request not found")
+
+    batch = db.query(Batch).filter(Batch.id == ret.batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    reason = req.reason if req and req.reason else "Quality inspection criteria not satisfied"
+    ret.status = "REJECTED"
+    db.commit()
+    db.refresh(ret)
+
+    # Telegram notification for Return Rejected (Event 4)
+    try:
+        med_name = batch.medicine.name if batch.medicine else "Unknown Medicine"
+        distributor_name = current_user.organization_name
+        pharmacy_name = batch.current_location or "Pharmacy"
+        notify_return_rejected(
+            medicine_name=med_name,
+            batch_number=batch.batch_number,
+            quantity=ret.declared_quantity,
+            distributor_org=distributor_name,
+            pharmacy_org=pharmacy_name,
+            reason=reason,
+            return_id=ret.id,
+        )
+    except Exception as exc:
+        logger.error("Failed to trigger return rejection notification: %s", exc)
+
+    return {"status": "ok", "message": "Return request rejected", "return_status": ret.status, "reason": reason}
+
 
 
 @router.post("/{return_id}/pickup")
@@ -161,7 +277,24 @@ def confirm_pickup(
     batch.current_location = "In Transit — Distributor"
     db.commit()
 
+    # Telegram notification for Pickup Completed (Event 5)
+    try:
+        med_name = batch.medicine.name if batch.medicine else "Unknown Medicine"
+        distributor_name = current_user.organization_name
+        pharmacy_name = "Pharmacy Store"
+        notify_pickup_completed(
+            medicine_name=med_name,
+            batch_number=batch.batch_number,
+            quantity=ret.declared_quantity,
+            distributor_org=distributor_name,
+            pharmacy_org=pharmacy_name,
+            return_id=ret.id,
+        )
+    except Exception as exc:
+        logger.error("Failed to trigger pickup completion notification: %s", exc)
+
     return {"status": "ok", "message": "Pickup confirmed", "batch_status": BatchStatus.PICKUP_CONFIRMED.value}
+
 
 
 @router.post("/{return_id}/receive")
@@ -219,6 +352,22 @@ def receive_return(
         batch.current_location = "Distributor Warehouse — Under Dispute"
         db.commit()
 
+        # Telegram notification for Discrepant Return Received (Event 6A - Disputed)
+        try:
+            med_name = batch.medicine.name if batch.medicine else "Unknown Medicine"
+            notify_return_received(
+                medicine_name=med_name,
+                batch_number=batch.batch_number,
+                declared_qty=declared_qty,
+                received_qty=received_qty,
+                status="DISPUTED",
+                distributor_org=current_user.organization_name,
+                is_disputed=True,
+                return_id=ret.id,
+            )
+        except Exception as exc:
+            logger.error("Failed to trigger return receipt notification: %s", exc)
+
         return {
             "status": "disputed",
             "message": f"Discrepancy detected: declared {declared_qty}, received {received_qty}",
@@ -257,8 +406,25 @@ def receive_return(
         batch.current_location = "Distributor Warehouse"
         db.commit()
 
+        # Telegram notification for Return Received (Event 6A - Received)
+        try:
+            med_name = batch.medicine.name if batch.medicine else "Unknown Medicine"
+            notify_return_received(
+                medicine_name=med_name,
+                batch_number=batch.batch_number,
+                declared_qty=declared_qty,
+                received_qty=received_qty,
+                status="RECEIVED_BY_DISTRIBUTOR",
+                distributor_org=current_user.organization_name,
+                is_disputed=False,
+                return_id=ret.id,
+            )
+        except Exception as exc:
+            logger.error("Failed to trigger return receipt notification: %s", exc)
+
         return {
             "status": "received",
             "message": f"Quantities match ({received_qty}). Received successfully.",
             "batch_status": BatchStatus.RECEIVED_BY_DISTRIBUTOR.value,
         }
+

@@ -59,6 +59,9 @@ app.include_router(certificates.router)
 app.include_router(audit.router)
 app.include_router(dashboard.router)
 app.include_router(evidence.router)
+<<<<<<< HEAD
+app.include_router(telegram.router)
+=======
 app.include_router(chatbot.router)
 app.include_router(reallocation.router)
 
