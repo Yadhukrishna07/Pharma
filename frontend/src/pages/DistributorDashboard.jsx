@@ -64,7 +64,7 @@ export default function DistributorDashboard() {
     setActionMsg(null);
     try {
       const res = await returnAPI.receiveReturn(data.incoming_return.id, Number(receivedQtyInput));
-      if (res.data.status === 'disputed') {
+      if (res.data.status === 'disputed' || res.data.status === 'DISPUTED' || res.data.batch_status === 'DISPUTED') {
         setActionMsg({
           type: 'warning',
           text: `Quantity Discrepancy Detected! Status moved to DISPUTED (${data.expected_quantity} declared vs ${receivedQtyInput} received). Dispute created & Moderator AI notified.`,

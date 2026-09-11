@@ -1,25 +1,25 @@
-import axios from 'axios';
+// 100% Frontend-Mocked API Layer for PharmMedian Platform
+// Runs entirely standalone in the browser using local storage & mock database.
+// Zero backend server required.
 
-const API_BASE_URL = 'http://localhost:8000';
+import { handleMockRequest } from './mockHandler';
 
-const api = axios.create({
-  baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
+// Simulated delay helper for realistic UI state handling
+const asyncMock = async (url, method, data = null) => {
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  return handleMockRequest(url, method, data);
+};
+
+const api = {
+  get: (url) => asyncMock(url, 'GET'),
+  post: (url, data) => asyncMock(url, 'POST', data),
+  put: (url, data) => asyncMock(url, 'PUT', data),
+  delete: (url) => asyncMock(url, 'DELETE'),
+  interceptors: {
+    request: { use: () => {} },
+    response: { use: () => {} },
   },
-});
-
-// Interceptor to attach token
-api.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('access_token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (error) => Promise.reject(error)
-);
+};
 
 export const authAPI = {
   login: (username, password) => api.post('/auth/login', { username, password }),
