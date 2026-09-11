@@ -46,6 +46,7 @@ if os.environ.get("VERCEL") != "1":
     upload_dir = os.path.join(os.getcwd(), "uploads")
     os.makedirs(upload_dir, exist_ok=True)
     app.mount("/uploads", StaticFiles(directory=upload_dir), name="uploads")
+
 from app.api import auth, batches, returns, disputes, destruction, certificates, audit, dashboard, evidence, chatbot, reallocation
 
 # Register routers
@@ -59,9 +60,6 @@ app.include_router(certificates.router)
 app.include_router(audit.router)
 app.include_router(dashboard.router)
 app.include_router(evidence.router)
-<<<<<<< HEAD
-app.include_router(telegram.router)
-=======
 app.include_router(chatbot.router)
 app.include_router(reallocation.router)
 
